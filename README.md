@@ -15,6 +15,8 @@ More over, I want to develop a library that abstracts the read- and write-system
 
 After everything is implemented properly, I want to develop a small application that can communicate with [octoprint](https://octoprint.org/) via its [API](https://docs.octoprint.org/en/master/api/printer.html#retrieve-the-current-printer-state) via REST to activate some defined LED-light color on the lamp, depending on the current [state](https://docs.octoprint.org/en/master/api/datamodel.html#sec-api-datamodel-printer-state) of the 3D printer. 
 
+Maybe I will enhance the lighting by sending telegram messages to my phone to get notifyed if the state of my printer has changed (e.g. after printing is finished).
+
 ### Electrical circuit
 + TBD
 + Important notes:
