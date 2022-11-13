@@ -11,13 +11,15 @@
 #include <linux/kdev_t.h> // needed for the automatic device file creation
 
 #define IRQ_PIN_INPUT_NO 26
+#define IRQ_PIN_INPUT_NO_SHUTDOWN 13
 #define IRQ_PIN_OUTPUT_NO 19
 
 static const char * driver_name = "led_lamp_driver";
 
 /* IRQ debouncing in software */
-static const unsigned long DEBOUNCE_JIFFIES = 20; // ms
+static const unsigned long DEBOUNCE_JIFFIES = 100; // ms
 static unsigned long old_jiffies = 0;
+static unsigned long old_jiffies_shutdown = 0;
 extern unsigned long volatile jiffies; // from the linux/jiffies.h - we need jiffies since the raspberry pi does not support hardware GPIO debouncing
 
 /* driver state */
@@ -25,6 +27,7 @@ static bool lamp_activated = false;
 
 /* IRQ number to which the IRQ_PIN_INPUT_NO pin is mapped to */
 unsigned int irq_input_pin;
+unsigned int irq_input_pin_shutdown;
 
 /* device file creation */
 dev_t major_dev_no = 0; // dummy value until the major device number is dynamically allocated within the init function
@@ -33,45 +36,93 @@ static const char * dev_class_name = "lamp_dev_class";
 static const char * dev_file_name = "printer_lamp";
 bool failed_initialization = false;
 
+/* Utility functions */
+bool check_file_existance(void) {
+    struct file *fp = (struct file *) NULL;
+
+    fp = filp_open("/dev/printer_lamp", O_RDONLY, 0);
+    if (IS_ERR(fp) || fp == NULL) {
+        printk("ERROR: filp_open\n");
+        return false;
+    }
+    return true;
+}
+
 /* Interrupt service routine - this is executed when the interrupt is triggered */
+static irq_handler_t lamp_shutdown_irq_routine(unsigned int irq_pin, void * dev_id, struct pt_regs * regs) {
+    // TODO: Needs to be blocked while the device is activated
+    
+    // debounce 
+    unsigned long diff_down = jiffies - old_jiffies_shutdown;
+    if (diff_down < DEBOUNCE_JIFFIES) {
+        printk("DEBUG: Interrupt occured but the debounce time was not completed\n");
+        old_jiffies_shutdown = jiffies;
+        return (irq_handler_t) IRQ_HANDLED;
+    }
+    printk("Lamp was shutting down - removing the device file\n");
+
+    // check if device file exists
+    bool device_file_exists = check_file_existance();
+    printk("DEBUG: device_file_exists = %d", device_file_exists);
+    if (!device_file_exists || !lamp_activated) {
+        printk("WARNING: The device file for the LED lamp driver does not exist - skipping!\n");
+        old_jiffies_shutdown = jiffies;
+        return (irq_handler_t) IRQ_NONE;
+    }
+
+    // remove device file
+    class_destroy(device_class);
+    lamp_activated = false;
+
+    printk("Removing the device file sucessful\n");
+    old_jiffies_shutdown = jiffies;
+    return (irq_handler_t) IRQ_HANDLED;
+}
+
 static irq_handler_t lamp_detection_irq_routine(unsigned int irq_pin, void * dev_id, struct pt_regs * regs) {
     /*
     * irq_pin: An interrupt handler could be invoked by multiple interrupt pins
     * dev_id: Device ID that caused the interrupt
     * pt_regs: Shows hardware specific registers - commonly used for debugging purposes
-    */
-
+    */    
     // debounce 
     unsigned long diff = jiffies - old_jiffies;
     if (diff < DEBOUNCE_JIFFIES) {
-        printk("WARNING: Interrupt occured but the debounce time was not completed\n");
-        return (irq_handler_t) IRQ_NONE;
+        printk("DEBUG: Interrupt occured but the debounce time was not completed\n");
+        return (irq_handler_t) IRQ_HANDLED;
     }
+
+    if (lamp_activated) {
+        printk("WARNING: Lamp is already activated\n");
+        old_jiffies = jiffies;
+        return (irq_handler_t) IRQ_HANDLED;
+    }
+
+    printk("Lamp detected - creating the device file\n");
 
     if (failed_initialization) {
         printk("Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
+        old_jiffies = jiffies;
         return (irq_handler_t) IRQ_HANDLED;
     }
     
-    if (!lamp_activated) {
-        // create the device file
-        if (IS_ERR(device_create(device_class, NULL, major_dev_no, NULL, dev_file_name))) {
-            printk("ERROR: Can not create the device file\n");
-            failed_initialization = true;
-            goto r_device;
-        }
+    // create the device file
+    if (IS_ERR(device_create(device_class, NULL, major_dev_no, NULL, dev_file_name))) {
+        printk("ERROR: Can not create the device file\n");
+        failed_initialization = true;
+        goto r_device;
     }
 
     lamp_activated = true;
-    printk("IRQ handler is executed!\n");
+    printk("Creating the device file sucessful\n");
     old_jiffies = jiffies;
     return (irq_handler_t) IRQ_HANDLED;
 
 r_device:
     class_destroy(device_class);
-    return (irq_handler_t) IRQ_HANDLED;
+    old_jiffies = jiffies;
+    return (irq_handler_t) IRQ_NONE;
 }
-
 
 /* Init and exit functions */
 static int __init gpio_lamp_init(void) {
@@ -79,8 +130,12 @@ static int __init gpio_lamp_init(void) {
 
     /* setup the GPIO - using the linux provided GPIO abstraction (NOT direct register programming) */
     // input pin for the interrupt
-    if (gpio_request(IRQ_PIN_INPUT_NO, "rpi-gpio-26")) { // GPIO 26 is the pin that should trigger the interrupt if it gets to the state HIGH
+    if (gpio_request(IRQ_PIN_INPUT_NO, "rpi-gpio-26")) { // GPIO 26 is the pin that should trigger the interrupt if it gets to the state from LOW to HIGH
         printk("ERROR: Can not access GPIO 26\n");
+        return -1;
+    }
+    if (gpio_request(IRQ_PIN_INPUT_NO_SHUTDOWN, "rpi-gpio-13")) { // GPIO 13 is the pin that should trigger the interrupt if it gets to the state from HIGH to LOW
+        printk("ERROR: Can not access GPIO 13\n");
         return -1;
     }
     if (gpio_direction_input(IRQ_PIN_INPUT_NO)) {
@@ -99,9 +154,15 @@ static int __init gpio_lamp_init(void) {
     /* setup the interrupt */
     // get IRQ number that is associated by the GPIO pin 26 (IRQ_PIN_INPUT_NO) - this is defined within the device tree 
     irq_input_pin = gpio_to_irq(IRQ_PIN_INPUT_NO);
-    // setup the IRQ service routine
+    // setup the IRQ service routine for the turn on
     if (request_irq(irq_input_pin, (irq_handler_t) lamp_detection_irq_routine, IRQF_TRIGGER_RISING, "led_lamp_detection_irq", NULL) != 0) {
         printk("ERROR: Can not link the interrupt handler to the GPIO 26 interrupt pin\n");
+        return -1;
+    }
+    // setup the IRQ service routine for the turn off - on GPIO 13
+    irq_input_pin_shutdown = gpio_to_irq(IRQ_PIN_INPUT_NO_SHUTDOWN);
+    if (request_irq(irq_input_pin_shutdown, (irq_handler_t) lamp_shutdown_irq_routine, IRQF_TRIGGER_FALLING, "led_lamp_shutdown_irq", NULL) != 0) {
+        printk("ERROR: Can not link the shutdown interrupt handler to the GPIO 26 interrupt pin\n");
         return -1;
     }
 
@@ -131,17 +192,19 @@ static void __exit gpio_lamp_exit(void) {
 
     /* Free the GPIOs that are allocated by the linux GPIO interface abstraction */
     gpio_free(IRQ_PIN_INPUT_NO);
+    gpio_free(IRQ_PIN_INPUT_NO_SHUTDOWN);
     gpio_free(IRQ_PIN_OUTPUT_NO);
 
     /* Free the IRQ of GPIO pin 26 IRQ_PIN_INPUT_NO */
     free_irq(irq_input_pin, NULL);
+    free_irq(irq_input_pin_shutdown, NULL);
 
     /* Unregister the major device file number */
     device_destroy(device_class, major_dev_no);
     class_destroy(device_class);
     unregister_chrdev_region(major_dev_no, 1);
     
-
+    lamp_activated = false;
     printk("Uninitializing the 3D printer lamp successful\n");
     return;
 }
