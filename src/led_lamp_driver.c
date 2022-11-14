@@ -48,26 +48,38 @@ bool check_file_existance(void) {
     return true;
 }
 
+unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr) {
+    unsigned long diff_down = jiffies - *old_jiff_ptr;
+    *old_jiff_ptr = jiffies;
+    return diff_down;
+}
+
 /* Interrupt service routine - this is executed when the interrupt is triggered */
-static irq_handler_t lamp_shutdown_irq_routine(unsigned int irq_pin, void * dev_id, struct pt_regs * regs) {
-    // TODO: Needs to be blocked while the device is activated
-    
-    // debounce 
-    unsigned long diff_down = jiffies - old_jiffies_shutdown;
-    if (diff_down < DEBOUNCE_JIFFIES) {
+// Turn off
+static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {
+    /* debounce */ 
+    // check for timeout
+    if (calc_last_irq_invocation(&old_jiffies_shutdown) < DEBOUNCE_JIFFIES) {
         printk("DEBUG: Interrupt occured but the debounce time was not completed\n");
-        old_jiffies_shutdown = jiffies;
         return (irq_handler_t) IRQ_HANDLED;
     }
-    printk("Lamp was shutting down - removing the device file\n");
+    // check if shutdown could have happend
+    if (!lamp_activated) {
+        printk("WARNING: Shutting down even if the lamp was never turned on - skipping!");
+        return (irq_handler_t) IRQ_HANDLED; 
+    }
 
+    printk("Lamp was shutting down - removing the device file\n");
+    return IRQ_WAKE_THREAD;
+}
+
+static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     // check if device file exists
     bool device_file_exists = check_file_existance();
     printk("DEBUG: device_file_exists = %d", device_file_exists);
-    if (!device_file_exists || !lamp_activated) {
-        printk("WARNING: The device file for the LED lamp driver does not exist - skipping!\n");
-        old_jiffies_shutdown = jiffies;
-        return (irq_handler_t) IRQ_NONE;
+    if (!device_file_exists) {
+        printk("ERROR: The device file for the LED lamp driver does not exist - skipping!\n");
+        return (irq_handler_t) IRQ_HANDLED;
     }
 
     // remove device file
@@ -75,34 +87,28 @@ static irq_handler_t lamp_shutdown_irq_routine(unsigned int irq_pin, void * dev_
     lamp_activated = false;
 
     printk("Removing the device file sucessful\n");
-    old_jiffies_shutdown = jiffies;
     return (irq_handler_t) IRQ_HANDLED;
 }
 
-static irq_handler_t lamp_detection_irq_routine(unsigned int irq_pin, void * dev_id, struct pt_regs * regs) {
-    /*
-    * irq_pin: An interrupt handler could be invoked by multiple interrupt pins
-    * dev_id: Device ID that caused the interrupt
-    * pt_regs: Shows hardware specific registers - commonly used for debugging purposes
-    */    
-    // debounce 
-    unsigned long diff = jiffies - old_jiffies;
-    if (diff < DEBOUNCE_JIFFIES) {
+// Turn on
+static irq_handler_t lamp_detection_irq_handler(int irq, void *dev_id) {
+    // debounce
+    if (calc_last_irq_invocation(&old_jiffies) < DEBOUNCE_JIFFIES) {
         printk("DEBUG: Interrupt occured but the debounce time was not completed\n");
         return (irq_handler_t) IRQ_HANDLED;
     }
-
     if (lamp_activated) {
         printk("WARNING: Lamp is already activated\n");
-        old_jiffies = jiffies;
         return (irq_handler_t) IRQ_HANDLED;
     }
 
     printk("Lamp detected - creating the device file\n");
+    return (irq_handler_t) IRQ_WAKE_THREAD;
+}
 
+static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
     if (failed_initialization) {
         printk("Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
-        old_jiffies = jiffies;
         return (irq_handler_t) IRQ_HANDLED;
     }
     
@@ -112,16 +118,14 @@ static irq_handler_t lamp_detection_irq_routine(unsigned int irq_pin, void * dev
         failed_initialization = true;
         goto r_device;
     }
-
     lamp_activated = true;
+    
     printk("Creating the device file sucessful\n");
-    old_jiffies = jiffies;
     return (irq_handler_t) IRQ_HANDLED;
 
 r_device:
     class_destroy(device_class);
-    old_jiffies = jiffies;
-    return (irq_handler_t) IRQ_NONE;
+    return (irq_handler_t) IRQ_HANDLED;
 }
 
 /* Init and exit functions */
@@ -155,13 +159,13 @@ static int __init gpio_lamp_init(void) {
     // get IRQ number that is associated by the GPIO pin 26 (IRQ_PIN_INPUT_NO) - this is defined within the device tree 
     irq_input_pin = gpio_to_irq(IRQ_PIN_INPUT_NO);
     // setup the IRQ service routine for the turn on
-    if (request_irq(irq_input_pin, (irq_handler_t) lamp_detection_irq_routine, IRQF_TRIGGER_RISING, "led_lamp_detection_irq", NULL) != 0) {
+    if (request_threaded_irq(irq_input_pin, (void *) lamp_detection_irq_handler, (void *) lamp_detection_irq_thrfn, IRQF_TRIGGER_RISING, "led_lamp_detection_irq", NULL) != 0) {
         printk("ERROR: Can not link the interrupt handler to the GPIO 26 interrupt pin\n");
         return -1;
     }
     // setup the IRQ service routine for the turn off - on GPIO 13
     irq_input_pin_shutdown = gpio_to_irq(IRQ_PIN_INPUT_NO_SHUTDOWN);
-    if (request_irq(irq_input_pin_shutdown, (irq_handler_t) lamp_shutdown_irq_routine, IRQF_TRIGGER_FALLING, "led_lamp_shutdown_irq", NULL) != 0) {
+    if (request_threaded_irq(irq_input_pin_shutdown, (void *) lamp_shutdown_irq_handler, (void *) lamp_shutdown_irq_thrfn, IRQF_TRIGGER_FALLING, "led_lamp_shutdown_irq", NULL) != 0) {
         printk("ERROR: Can not link the shutdown interrupt handler to the GPIO 26 interrupt pin\n");
         return -1;
     }
