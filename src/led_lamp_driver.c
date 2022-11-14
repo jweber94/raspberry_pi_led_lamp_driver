@@ -10,6 +10,8 @@
 #include <linux/device.h> // needed for the automatic device file creation
 #include <linux/kdev_t.h> // needed for the automatic device file creation
 
+#include <linux/mutex.h>
+
 #define IRQ_PIN_INPUT_NO 26
 #define IRQ_PIN_INPUT_NO_SHUTDOWN 13
 #define IRQ_PIN_OUTPUT_NO 19
@@ -35,6 +37,9 @@ static struct class * device_class;
 static const char * dev_class_name = "lamp_dev_class";
 static const char * dev_file_name = "printer_lamp";
 bool failed_initialization = false;
+
+/* Make the device file an exclusive ressource by using a mutex */
+struct mutex dev_file_mutex;
 
 /* Utility functions */
 bool check_file_existance(void) {
@@ -70,15 +75,19 @@ static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {
     }
 
     printk("Lamp was shutting down - removing the device file\n");
-    return IRQ_WAKE_THREAD;
+    return (irq_handler_t) IRQ_WAKE_THREAD;
 }
 
 static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
+    mutex_lock(&dev_file_mutex);
+    printk("INFO: lamp_shutdown_irq_thrfn was called!\n");
+    
     // check if device file exists
     bool device_file_exists = check_file_existance();
     printk("DEBUG: device_file_exists = %d", device_file_exists);
     if (!device_file_exists) {
         printk("ERROR: The device file for the LED lamp driver does not exist - skipping!\n");
+        mutex_unlock(&dev_file_mutex);
         return (irq_handler_t) IRQ_HANDLED;
     }
 
@@ -87,6 +96,7 @@ static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     lamp_activated = false;
 
     printk("Removing the device file sucessful\n");
+    mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
 }
 
@@ -107,6 +117,8 @@ static irq_handler_t lamp_detection_irq_handler(int irq, void *dev_id) {
 }
 
 static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
+    mutex_lock(&dev_file_mutex);
+    printk("INFO: lamp_detection_irq_thrfn was called!\n");
     if (failed_initialization) {
         printk("Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
         return (irq_handler_t) IRQ_HANDLED;
@@ -121,10 +133,12 @@ static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
     lamp_activated = true;
     
     printk("Creating the device file sucessful\n");
+    mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
 
 r_device:
     class_destroy(device_class);
+    mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
 }
 
@@ -156,6 +170,7 @@ static int __init gpio_lamp_init(void) {
     }
 
     /* setup the interrupt */
+    mutex_init(&dev_file_mutex);
     // get IRQ number that is associated by the GPIO pin 26 (IRQ_PIN_INPUT_NO) - this is defined within the device tree 
     irq_input_pin = gpio_to_irq(IRQ_PIN_INPUT_NO);
     // setup the IRQ service routine for the turn on
