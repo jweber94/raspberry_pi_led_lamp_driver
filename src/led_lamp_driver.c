@@ -22,6 +22,7 @@ static const char * driver_name = "led_lamp_driver";
 static const unsigned long DEBOUNCE_JIFFIES = 100; // ms
 static unsigned long old_jiffies = 0;
 static unsigned long old_jiffies_shutdown = 0;
+static unsigned long old_jiffies_state_change = 0;
 extern unsigned long volatile jiffies; // from the linux/jiffies.h - we need jiffies since the raspberry pi does not support hardware GPIO debouncing
 
 /* driver state */
@@ -43,48 +44,56 @@ struct mutex dev_file_mutex;
 
 /* Utility functions */
 bool check_file_existance(void) {
-    struct file *fp = (struct file *) NULL;
-
-    fp = filp_open("/dev/printer_lamp", O_RDONLY, 0);
-    if (IS_ERR(fp) || fp == NULL) {
-        printk("ERROR: filp_open\n");
-        return false;
+    if (device_class  != NULL) {
+        return true;
     }
-    return true;
+    printk("ERROR: Device file does not exist!\n");
+    return false;
 }
 
-unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr) {
+unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr, bool reset_jiffies) {
     unsigned long diff_down = jiffies - *old_jiff_ptr;
-    *old_jiff_ptr = jiffies;
+    if (reset_jiffies) {
+        *old_jiff_ptr = jiffies;
+    }
     return diff_down;
+}
+
+void set_state_change_jiffies(void) {
+    printk("INFO: State change happend - blocking the switch back for 100ms\n");
+    old_jiffies_state_change = jiffies;
 }
 
 /* Interrupt service routine - this is executed when the interrupt is triggered */
 // Turn off
-static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {
+static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {   
     /* debounce */ 
     // check for timeout
-    if (calc_last_irq_invocation(&old_jiffies_shutdown) < DEBOUNCE_JIFFIES) {
-        printk("DEBUG: Interrupt occured but the debounce time was not completed\n");
+    if (calc_last_irq_invocation(&old_jiffies_shutdown, true) < DEBOUNCE_JIFFIES) {
         return (irq_handler_t) IRQ_HANDLED;
     }
     // check if shutdown could have happend
+    mutex_lock(&dev_file_mutex);
     if (!lamp_activated) {
-        printk("WARNING: Shutting down even if the lamp was never turned on - skipping!");
+        printk("WARNING: Shutting down request even if the lamp was never turned on - skipping!\n");
+        mutex_unlock(&dev_file_mutex);
         return (irq_handler_t) IRQ_HANDLED; 
     }
+    mutex_unlock(&dev_file_mutex);
+    // avoid to fast state changes
+    if (calc_last_irq_invocation(&old_jiffies_state_change, false) < DEBOUNCE_JIFFIES) {
+        printk("WARNING: State change happend less then 100ms ago - this might be a bouncing effect\n");
+        return (irq_handler_t) IRQ_HANDLED;
+    }
 
-    printk("Lamp was shutting down - removing the device file\n");
+    printk("INFO: Lamp was shutting down - removing the device file\n");
     return (irq_handler_t) IRQ_WAKE_THREAD;
 }
 
 static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     mutex_lock(&dev_file_mutex);
-    printk("INFO: lamp_shutdown_irq_thrfn was called!\n");
-    
     // check if device file exists
     bool device_file_exists = check_file_existance();
-    printk("DEBUG: device_file_exists = %d", device_file_exists);
     if (!device_file_exists) {
         printk("ERROR: The device file for the LED lamp driver does not exist - skipping!\n");
         mutex_unlock(&dev_file_mutex);
@@ -92,27 +101,35 @@ static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     }
 
     // remove device file
-    class_destroy(device_class);
+    device_destroy(device_class, major_dev_no);
     lamp_activated = false;
-
-    printk("Removing the device file sucessful\n");
+    set_state_change_jiffies();
+    
+    printk("INFO: Removing the device file sucessful\n");
     mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
 }
 
 // Turn on
-static irq_handler_t lamp_detection_irq_handler(int irq, void *dev_id) {
+static irq_handler_t lamp_detection_irq_handler(int irq, void *dev_id) {    
     // debounce
-    if (calc_last_irq_invocation(&old_jiffies) < DEBOUNCE_JIFFIES) {
-        printk("DEBUG: Interrupt occured but the debounce time was not completed\n");
+    if (calc_last_irq_invocation(&old_jiffies, true) < DEBOUNCE_JIFFIES) {
         return (irq_handler_t) IRQ_HANDLED;
     }
+    mutex_lock(&dev_file_mutex);
     if (lamp_activated) {
         printk("WARNING: Lamp is already activated\n");
+        mutex_unlock(&dev_file_mutex);
         return (irq_handler_t) IRQ_HANDLED;
     }
-
-    printk("Lamp detected - creating the device file\n");
+    mutex_unlock(&dev_file_mutex);
+    
+    if (calc_last_irq_invocation(&old_jiffies_state_change, false) < DEBOUNCE_JIFFIES) {
+        printk("WARNING: State change happend less then 100ms ago - this might be a bouncing effect\n");
+        return (irq_handler_t) IRQ_HANDLED;
+    }
+    
+    printk("INFO: Lamp detected - creating the device file\n");
     return (irq_handler_t) IRQ_WAKE_THREAD;
 }
 
@@ -120,7 +137,7 @@ static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
     mutex_lock(&dev_file_mutex);
     printk("INFO: lamp_detection_irq_thrfn was called!\n");
     if (failed_initialization) {
-        printk("Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
+        printk("ERROR: Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
         return (irq_handler_t) IRQ_HANDLED;
     }
     
@@ -131,8 +148,9 @@ static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
         goto r_device;
     }
     lamp_activated = true;
-    
-    printk("Creating the device file sucessful\n");
+    set_state_change_jiffies();
+
+    printk("INFO: Creating the device file sucessful\n");
     mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
 
@@ -144,7 +162,7 @@ r_device:
 
 /* Init and exit functions */
 static int __init gpio_lamp_init(void) {
-    printk("Initialize 3D printer lamp");
+    printk("INFO: Initialize 3D printer lamp\n");
 
     /* setup the GPIO - using the linux provided GPIO abstraction (NOT direct register programming) */
     // input pin for the interrupt
@@ -169,8 +187,24 @@ static int __init gpio_lamp_init(void) {
         printk("ERROR: Can not make GPIO 19 to an output pin\n");
     }
 
+    /* Allocate a major device number - the concrete device file will be created in the interrupt handler */
+    if (alloc_chrdev_region(&major_dev_no, 0, 1, driver_name) < 0) { // returns 0 on success and < 0 if it fails; the first argument is the pointer where the output should be written to
+        printk("ERROR: Can not allocate a major device number!\n");
+        return -1;
+    } else {
+        printk("INFO: Major device number = %d; Minor device number = %d\n", MAJOR(major_dev_no), MINOR(major_dev_no));
+    }
+    device_class = class_create(THIS_MODULE, dev_class_name);
+    if (IS_ERR(device_class)) {
+        printk("ERROR: Can not create the struct class for the device\n");
+        goto r_class;
+    }
+
     /* setup the interrupt */
     mutex_init(&dev_file_mutex);
+    // avoid bouncing on startup since we have set pin 19 to the default value to HIGH
+    old_jiffies = jiffies;
+    old_jiffies_shutdown = jiffies;
     // get IRQ number that is associated by the GPIO pin 26 (IRQ_PIN_INPUT_NO) - this is defined within the device tree 
     irq_input_pin = gpio_to_irq(IRQ_PIN_INPUT_NO);
     // setup the IRQ service routine for the turn on
@@ -185,20 +219,7 @@ static int __init gpio_lamp_init(void) {
         return -1;
     }
 
-    /* Allocate a major device number - the concrete device file will be created in the interrupt handler */
-    if (alloc_chrdev_region(&major_dev_no, 0, 1, driver_name) < 0) { // returns 0 on success and < 0 if it fails; the first argument is the pointer where the output should be written to
-        printk("ERROR: Can not allocate a major device number!\n");
-        return -1;
-    } else {
-        printk("Major device number = %d; Minor device number = %d\n", MAJOR(major_dev_no), MINOR(major_dev_no));
-    }
-    device_class = class_create(THIS_MODULE, dev_class_name);
-    if (IS_ERR(device_class)) {
-        printk("ERROR: Can not create the struct class for the device\n");
-        goto r_class;
-    }
-
-    printk("Initialize 3D printer lamp successful\n");
+    printk("INFO: Initialize 3D printer lamp successful\n");
     return 0;
 
 r_class:
@@ -207,7 +228,7 @@ r_class:
 }
 
 static void __exit gpio_lamp_exit(void) {
-    printk("Uninitializing the 3D printer lamp\n");
+    printk("INFO: Uninitializing the 3D printer lamp\n");
 
     /* Free the GPIOs that are allocated by the linux GPIO interface abstraction */
     gpio_free(IRQ_PIN_INPUT_NO);
@@ -224,7 +245,7 @@ static void __exit gpio_lamp_exit(void) {
     unregister_chrdev_region(major_dev_no, 1);
     
     lamp_activated = false;
-    printk("Uninitializing the 3D printer lamp successful\n");
+    printk("INFO: Uninitializing the 3D printer lamp successful\n");
     return;
 }
 
