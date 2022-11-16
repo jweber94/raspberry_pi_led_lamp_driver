@@ -43,6 +43,7 @@
     - Another example how we can implement device drivers based on kernel frameworks is [14] and its continuing blog posts with the _nintendo nunchunk_ controller. Here, the already existing i2c interface of the beaglebone black is used to implement another hardware driver that implements the Linux Input Subsystem [14] [15]
 
 ### Kernel Build System and Macros
++ The kernel build system that is used to build the kernel itself and that is needed to build the self developed and/or out-of-tree kernel modules is called ***KBuild*** (more information, see section _The KBuild build system_)
 + A valid char driver implements at least the module initialization and the module exit/deletion callback. These callbacks need to be passed to the `module_init(fcn_ptr)` and `module_exit(fcn_ptr)` functions of the kernel that are defined within `#include <linux/module.h>` [16]
     - The functions needs to add a `__init` macro from [17], which describes their function signature [18]
         * This macro makes the kernel use less memory since it knows that these functions just one time executed (when the module is initialized and is exited). Therefore it can free their memory after their invokation!
@@ -52,6 +53,30 @@
     - The last `modules` command tells the kernel build system that we want to build its target `modules`
         * See the implementation in `/lib/modules/$(uname -r)/build/Makefile`
 + Our newly created object file needs to be added to the kernel build system. Its name *must* correspond to the `.c` file that should be build as the kernel module!
+
+#### The KBuild build system
++ The KBuild [27] build system is the build system that the kernel is using to compile itself and that is needed to compile kernel modules. It is invoked by the `make` commands that are described above!
+    - It is also possible to develop kernel modules within more then just one file.
+    - Also, the KBuild system delivers a mechanism to install the compiled kernel modules on the system.
+    - See [24] for a very good explaination by kernel.org how to use it to compile kernel modules!
+    - ***If you want to develop kernel modules and install them, make sure to refer to the KBuild system properly and use it as you should use it! This will help to provide a clean kernel module project!***
+
+#### In-Tree vs Out-of-Tree Kernel modules
++ Kernel modules that are permanently used on the targeted system need to be installed on it. You can find the installed modules on your linux system within `/usr/lib/modules/$(uname -r)`
+    - Self developed kernel modules will be placed under `/usr/lib/modules/$(uname -r)/extra` on default!
+        * You can specify a custom folder name or a custom location within KBuild. See [24] for details on this.
++ Kernel modules can be installed _out-of-tree_ or _in-tree_:
+    - Out-of-Tree:
+        * The *source code* of the kernel module is placed anywhere on the system
+        * In order to build the kernel module and/or install it on the system, you need the kernel headers and the KBuild system (which comes with the kernel headers) installed on the system to compile it and make it loadable by the running kernel
+        * This is the most common way for device drivers that needed for hardware that is not commonly used.
+            * To bring a kernel driver In-Tree to a kernel version it is a lot of work and since there are many kernel version, it will be even more work to do! Therefore you need to have a good reason to go through that process to get accepted by the kernel maintainers!
+    - In-Tree:
+        * The *source-code* is available during compilation of the kernel and is delivered with the kernel package. Therefore, there is no need to compile it on the target system!
+        * If you build your custom kernel by compiling it yourself, the source code needs to be placed in a certain directory and some configuration files need to be adjusted. After that, you can choose the kernel module via the `menuconfig` terminal interface in order to build it together with the kernel!
+        * You can compile your kernel module in tree if you are in charge of the kernel/linux distribution itself, e.g. if you are using yocto for it!
+            - See [26] how to insert an in-tree kernel module in yocto  
++ ***Since the 3D printer lamp is just used on an octopi or a few devices, I choose to install the kernel module for it out-of-tree. Maybe I will develop a _3DprinterOS_ in the future with yocto, targeted on a stm32 machine or I will ask the octoprints kernel maintainers to include my module to the kernel.***
 
 ### char Drivers and their locations
 + There are multiple locations where you can and should store your device driver files. Where you store your device file depends on what it should do.
@@ -91,3 +116,7 @@
 + [21] https://stackoverflow.com/questions/5970595/how-to-create-a-device-node-from-the-init-module-code-of-a-linux-kernel-module
 + [22] https://stackoverflow.com/questions/20301591/m-option-in-make-command-makefile
 + [23] https://linux.die.net/man/1/make
++ [24] https://www.kernel.org/doc/Documentation/kbuild/modules.txt
++ [25] https://wiki.postmarketos.org/wiki/Out-of-tree_kernel_modules#:~:text=The%20modules%20that%20can%20be,source%20code%20is%20located%20elsewhere.
++ [26] https://stackoverflow.com/questions/72974408/how-to-build-in-tree-linux-kernel-module-in-yocto
++ [27] https://www.kernel.org/doc/html/latest/kbuild/kbuild.html
