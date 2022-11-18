@@ -11,10 +11,13 @@
 #include <linux/kdev_t.h> // needed for the automatic device file creation
 
 #include <linux/mutex.h>
+#include <linux/delay.h> // for msleep()
 
 #define IRQ_PIN_INPUT_NO 26
 #define IRQ_PIN_INPUT_NO_SHUTDOWN 13
 #define IRQ_PIN_OUTPUT_NO 19
+
+// #define DEBUG // outcomment this if you want to generate a release version
 
 static const char * driver_name = "led_lamp_driver";
 
@@ -22,7 +25,6 @@ static const char * driver_name = "led_lamp_driver";
 static const unsigned long DEBOUNCE_JIFFIES = 100; // ms
 static unsigned long old_jiffies = 0;
 static unsigned long old_jiffies_shutdown = 0;
-static unsigned long old_jiffies_state_change = 0;
 extern unsigned long volatile jiffies; // from the linux/jiffies.h - we need jiffies since the raspberry pi does not support hardware GPIO debouncing
 
 /* driver state */
@@ -51,25 +53,20 @@ bool check_file_existance(void) {
     return false;
 }
 
-unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr, bool reset_jiffies) {
+unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr) {
     unsigned long diff_down = jiffies - *old_jiff_ptr;
-    if (reset_jiffies) {
-        *old_jiff_ptr = jiffies;
-    }
+    *old_jiff_ptr = jiffies;
     return diff_down;
-}
-
-void set_state_change_jiffies(void) {
-    printk("INFO: State change happend - blocking the switch back for 100ms\n");
-    old_jiffies_state_change = jiffies;
 }
 
 /* Interrupt service routine - this is executed when the interrupt is triggered */
 // Turn off
 static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {   
-    /* debounce */ 
-    // check for timeout
-    if (calc_last_irq_invocation(&old_jiffies_shutdown, true) < DEBOUNCE_JIFFIES) {
+    // debounce 
+    if (calc_last_irq_invocation(&old_jiffies_shutdown) < DEBOUNCE_JIFFIES) {
+        #ifdef DEBUG
+            printk("DEBUG: Debounce lamp deactivation\n");
+        #endif
         return (irq_handler_t) IRQ_HANDLED;
     }
     // check if shutdown could have happend
@@ -80,11 +77,6 @@ static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {
         return (irq_handler_t) IRQ_HANDLED; 
     }
     mutex_unlock(&dev_file_mutex);
-    // avoid to fast state changes
-    if (calc_last_irq_invocation(&old_jiffies_state_change, false) < DEBOUNCE_JIFFIES) {
-        printk("WARNING: State change happend less then 100ms ago - this might be a bouncing effect\n");
-        return (irq_handler_t) IRQ_HANDLED;
-    }
 
     printk("INFO: Lamp was shutting down - removing the device file\n");
     return (irq_handler_t) IRQ_WAKE_THREAD;
@@ -93,8 +85,7 @@ static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {
 static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     mutex_lock(&dev_file_mutex);
     // check if device file exists
-    bool device_file_exists = check_file_existance();
-    if (!device_file_exists) {
+    if (!check_file_existance()) {
         printk("ERROR: The device file for the LED lamp driver does not exist - skipping!\n");
         mutex_unlock(&dev_file_mutex);
         return (irq_handler_t) IRQ_HANDLED;
@@ -103,7 +94,6 @@ static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     // remove device file
     device_destroy(device_class, major_dev_no);
     lamp_activated = false;
-    set_state_change_jiffies();
     
     printk("INFO: Removing the device file sucessful\n");
     mutex_unlock(&dev_file_mutex);
@@ -113,44 +103,62 @@ static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
 // Turn on
 static irq_handler_t lamp_detection_irq_handler(int irq, void *dev_id) {    
     // debounce
-    if (calc_last_irq_invocation(&old_jiffies, true) < DEBOUNCE_JIFFIES) {
+    if (calc_last_irq_invocation(&old_jiffies) < DEBOUNCE_JIFFIES) {
+        #ifdef DEBUG
+            printk("DEBUG: Debounce lamp activation\n");
+        #endif
         return (irq_handler_t) IRQ_HANDLED;
     }
+
+    if (mutex_is_locked(&dev_file_mutex) == 1) {
+        #ifdef DEBUG
+            printk("WARNING: Mutex is currently locked - skipping!\n");
+        #endif
+        return (irq_handler_t) IRQ_HANDLED;
+    }
+
     mutex_lock(&dev_file_mutex);
     if (lamp_activated) {
-        printk("WARNING: Lamp is already activated\n");
+        #ifdef DEBUG
+            printk("WARNING: Lamp is already activated\n");
+        #endif
         mutex_unlock(&dev_file_mutex);
         return (irq_handler_t) IRQ_HANDLED;
     }
     mutex_unlock(&dev_file_mutex);
     
-    if (calc_last_irq_invocation(&old_jiffies_state_change, false) < DEBOUNCE_JIFFIES) {
-        printk("WARNING: State change happend less then 100ms ago - this might be a bouncing effect\n");
+    if (failed_initialization) {
+        printk("ERROR: Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
         return (irq_handler_t) IRQ_HANDLED;
     }
-    
-    printk("INFO: Lamp detected - creating the device file\n");
     return (irq_handler_t) IRQ_WAKE_THREAD;
 }
 
 static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
     mutex_lock(&dev_file_mutex);
-    printk("INFO: lamp_detection_irq_thrfn was called!\n");
-    if (failed_initialization) {
-        printk("ERROR: Initialization of the device file failed the last time. Please check your system and reload this kernel module.\n");
+    #ifdef DEBUG
+        printk("INFO: lamp_detection_irq_thrfn was called!\n");
+    #endif
+
+    // check actual input state after deboune time of the input GPIO
+    msleep(100); // sleep 200 msecs to wait until bouncing has finished
+    if (gpio_get_value(IRQ_PIN_INPUT_NO) == 0) {
+        #ifdef DEBUG
+            printk("WARNING: Turn on interrupt was called even if the input state of the detection GPIO is LOW - skipping!\n");
+        #endif
+        mutex_unlock(&dev_file_mutex);
         return (irq_handler_t) IRQ_HANDLED;
     }
-    
+
     // create the device file
     if (IS_ERR(device_create(device_class, NULL, major_dev_no, NULL, dev_file_name))) {
-        printk("ERROR: Can not create the device file\n");
+        printk("ERROR: Can not create the device file - a major error occured!\n");
         failed_initialization = true;
         goto r_device;
     }
     lamp_activated = true;
-    set_state_change_jiffies();
 
-    printk("INFO: Creating the device file sucessful\n");
+    printk("INFO: Creating the /dev/printer_lamp device file sucessful\n");
     mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
 
