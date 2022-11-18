@@ -10,6 +10,8 @@
 #include <linux/device.h> // needed for the automatic device file creation
 #include <linux/kdev_t.h> // needed for the automatic device file creation
 
+#include <linux/cdev.h> // inode abstraction
+
 #include <linux/mutex.h>
 #include <linux/delay.h> // for msleep()
 
@@ -40,6 +42,9 @@ static struct class * device_class;
 static const char * dev_class_name = "lamp_dev_class";
 static const char * dev_file_name = "printer_lamp";
 bool failed_initialization = false;
+
+/* inode abstraction */
+static struct cdev lamp_cdev;
 
 /* Make the device file an exclusive ressource by using a mutex */
 struct mutex dev_file_mutex;
@@ -168,6 +173,42 @@ r_device:
     return (irq_handler_t) IRQ_HANDLED;
 }
 
+/* File operation functions */
+
+static int syscall_open(struct inode *inode, struct file *file)
+{
+        printk("INFO: Driver Open Function Called...!!!\n");
+        return 0;
+}
+
+static int syscall_release(struct inode *inode, struct file *file)
+{
+        printk("INFO: Driver Release Function Called...!!!\n");
+        return 0;
+}
+
+static ssize_t syscall_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
+{
+        printk("INFO: Driver Read Function Called...!!!\n");
+        return 0;
+}
+
+static ssize_t syscall_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
+{
+        printk("INFO: Driver Write Function Called...!!!\n");
+        return len;
+}
+
+// fops object to link against the inode file that descrives the char device file
+static struct file_operations fops =
+{
+    .owner      = THIS_MODULE,
+    .read       = syscall_read,
+    .write      = syscall_write,
+    .open       = syscall_open,
+    .release    = syscall_release
+};
+
 /* Init and exit functions */
 static int __init gpio_lamp_init(void) {
     printk("INFO: Initialize 3D printer lamp\n");
@@ -202,6 +243,14 @@ static int __init gpio_lamp_init(void) {
     } else {
         printk("INFO: Major device number = %d; Minor device number = %d\n", MAJOR(major_dev_no), MINOR(major_dev_no));
     }
+    // Creating cdev structure
+    cdev_init(&lamp_cdev, &fops);
+    // Adding character device to the system
+    if((cdev_add(&lamp_cdev, major_dev_no, 1)) < 0){
+        pr_err("Cannot add the device to the system\n");
+        goto r_class;
+    }
+
     device_class = class_create(THIS_MODULE, dev_class_name);
     if (IS_ERR(device_class)) {
         printk("ERROR: Can not create the struct class for the device\n");
@@ -250,6 +299,7 @@ static void __exit gpio_lamp_exit(void) {
     /* Unregister the major device file number */
     device_destroy(device_class, major_dev_no);
     class_destroy(device_class);
+    cdev_del(&lamp_cdev);
     unregister_chrdev_region(major_dev_no, 1);
     
     lamp_activated = false;
