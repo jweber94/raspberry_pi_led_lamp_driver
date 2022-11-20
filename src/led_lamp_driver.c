@@ -15,11 +15,13 @@
 #include <linux/mutex.h>
 #include <linux/delay.h> // for msleep()
 
+#include <linux/atomic.h>
+
 #define IRQ_PIN_INPUT_NO 26
 #define IRQ_PIN_INPUT_NO_SHUTDOWN 13
 #define IRQ_PIN_OUTPUT_NO 19
 
-// #define DEBUG // outcomment this if you want to generate a release version
+#define DEBUG // outcomment this if you want to generate a release version
 
 static const char * driver_name = "led_lamp_driver";
 
@@ -46,8 +48,14 @@ bool failed_initialization = false;
 /* inode abstraction */
 static struct cdev lamp_cdev;
 
-/* Make the device file an exclusive ressource by using a mutex */
+/* make the device file an exclusive ressource by using a mutex */
 struct mutex dev_file_mutex;
+
+/* buffer pointer for the user interaction */
+static char user_interface_buffer [512]; // one char holds 8 bit (aka one byte) of memory - stack allocation is needed to avoid freeing heap memory while another user space application is accessing it or complicating the code because we do opener tracking
+struct mutex user_buffer_mutex;
+unsigned int access_counter = 0;
+atomic_t printer_state; // ATOMIC_INIT(-1);
 
 /* Utility functions */
 bool check_file_existance(void) {
@@ -177,26 +185,101 @@ r_device:
 
 static int syscall_open(struct inode *inode, struct file *file)
 {
-        printk("INFO: Driver Open Function Called...!!!\n");
+        // allocate memory on the heap to do the user interaction
+        access_counter += 1;
+        #ifdef DEBUG
+            printk("INFO: Printer lamp driver opened. Currently there are %d user space applications that opened the device.\n", access_counter);
+        #endif
         return 0;
 }
 
-static int syscall_release(struct inode *inode, struct file *file)
+static int syscall_close(struct inode *inode, struct file *file)
 {
-        printk("INFO: Driver Release Function Called...!!!\n");
+        access_counter -= 1;
+        #ifdef DEBUG
+            printk("INFO: Printer lamp driver closed. Currently there are %d user space applications that opened the device.\n", access_counter);
+        #endif
         return 0;
 }
 
-static ssize_t syscall_read(struct file *filp, char __user *buf, size_t len, loff_t *off)
-{
-        printk("INFO: Driver Read Function Called...!!!\n");
-        return 0;
+static ssize_t syscall_read(struct file *filp, char __user *userp, size_t size, loff_t *off)
+{       
+    #ifdef DEBUG
+        printk("DEBUG: printer_lamp read was called!\n");
+    #endif
+    uint32_t current_state;
+    size_t not_copied = 0;
+    current_state = atomic_read(&printer_state);
+    printk("DEBUG: Returning current state %ld", current_state);
+    if (current_state > 7 || current_state < 0) { 
+        return simple_read_from_buffer(userp, size, off, "Invalid state\n", 14);
+    } else {
+        return simple_read_from_buffer(userp, size, off, &current_state, sizeof(current_state)); // 4 bit because https://raspberry-projects.com/pi/programming-in-c/memory/variables
+    }
 }
 
-static ssize_t syscall_write(struct file *filp, const char __user *buf, size_t len, loff_t *off)
-{
-        printk("INFO: Driver Write Function Called...!!!\n");
-        return len;
+static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t size, loff_t *off)
+{       
+        #ifdef DEBUG
+            printk("DEBUG: printer_lamp write was called\n");
+        #endif
+        unsigned int requested_lamp_state = UINT_MAX; 
+        // reset the user interaction memory
+        mutex_lock(&user_buffer_mutex);
+        /* CAUTION: In order to avoid an overwriting by another user space application, we need to parse out the relevant information while the lock is still active - the processing can then be done while the lock is released in order to not lock for an unnecessary long time */
+        memset(user_interface_buffer, 0x0, sizeof(user_interface_buffer));
+        if (copy_from_user(user_interface_buffer, userp, size)) {
+            printk("ERROR: Could not read user space data");
+            return 0;
+        }
+        #ifdef DEBUG
+            printk("DEBUG: Data from user space is: %s", user_interface_buffer);
+        #endif
+        if (sscanf(user_interface_buffer, "%d", &requested_lamp_state) != 1) { // https://cplusplus.com/reference/cstdio/sscanf/
+            printk("ERROR: Inproper data format submitted by the user space application!\n");
+            mutex_unlock(&user_buffer_mutex);
+            return size;
+        }
+        mutex_unlock(&user_buffer_mutex);
+
+        if (requested_lamp_state < 0 || requested_lamp_state > 7) {
+            printk("WARNING: The requested lamp state was %d, you can only choose between state 0 and 7!\n", requested_lamp_state);
+            return size;
+        }
+        printk("DEBUG: Start atomic set");
+        atomic_set(&printer_state, (int) requested_lamp_state);
+        printk("DEBUG: Finish atomic set");
+        switch (requested_lamp_state) {
+            case 0:
+                printk("INFO: Lamp is going to state 0\n");
+                break;
+            case 1:
+                printk("INFO: Lamp is going to state 1\n");
+                break;
+            case 2:
+                printk("INFO: Lamp is going to state 2\n");
+                break;
+            case 3:
+                printk("INFO: Lamp is going to state 3\n");
+                break;
+            case 4:
+                printk("INFO: Lamp is going to state 4\n");
+                break;
+            case 5:
+                printk("INFO: Lamp is going to state 5\n");
+                break;
+            case 6:
+                printk("INFO: Lamp is going to state 6\n");
+                break;
+            case 7:
+                printk("INFO: Lamp is going to state 7\n");
+                break;
+            default:
+                printk("ERROR: Received invalid state!\n");
+                break;
+        }
+        printk("DEBUG: Finished\n");
+        return size;
 }
 
 // fops object to link against the inode file that descrives the char device file
@@ -206,7 +289,7 @@ static struct file_operations fops =
     .read       = syscall_read,
     .write      = syscall_write,
     .open       = syscall_open,
-    .release    = syscall_release
+    .release    = syscall_close
 };
 
 /* Init and exit functions */
@@ -275,6 +358,10 @@ static int __init gpio_lamp_init(void) {
         printk("ERROR: Can not link the shutdown interrupt handler to the GPIO 26 interrupt pin\n");
         return -1;
     }
+
+    // secure user buffer if more then one user space application is accessing it at the same time
+    mutex_init(&user_buffer_mutex);
+    atomic_set(&printer_state, UINT_MAX);
 
     printk("INFO: Initialize 3D printer lamp successful\n");
     return 0;
