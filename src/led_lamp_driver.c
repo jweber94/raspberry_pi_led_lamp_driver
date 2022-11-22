@@ -57,6 +57,10 @@ struct mutex user_buffer_mutex;
 unsigned int access_counter = 0;
 atomic_t printer_state; // ATOMIC_INIT(-1);
 
+/* Direct register access to enlight the LEDs */
+#define BCM2837_GPIO_ADDRESS 0x3F200000
+static unsigned int * gpio_registers_addr = NULL;
+
 /* Utility functions */
 bool check_file_existance(void) {
     if (device_class  != NULL) {
@@ -70,6 +74,62 @@ unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr) {
     unsigned long diff_down = jiffies - *old_jiff_ptr;
     *old_jiff_ptr = jiffies;
     return diff_down;
+}
+
+static void gpio_pin_on(unsigned int pin) {
+  
+  /* Getting the demanded bits of the GPIO registers - I found this code on the internet */
+  unsigned int gpfsel_index_n = pin/10;
+  unsigned int fsel_bit_pos = pin%10;
+  unsigned int * gpfsel_n = gpio_registers_addr + gpfsel_index_n; // Get the correct GPFSEL register
+  
+  unsigned int * gpset_register = (unsigned int *)((char *) gpio_registers_addr + 0x1c); // the gpset_n register has the offset 0x1c from the gpfsel registers
+
+  /*  */
+  // setting all of the pin function selection bits to zeros
+  *gpfsel_n &= ~(7 << (fsel_bit_pos*3)); // 7 is 111 in binary, 111 is left shifted by the bit position and then inverted, so 000; The &= is a bitwise comparison and therefore sets every bit to zero
+  // setting the new value to the gpio (001 but with LSB)
+  *gpfsel_n |= (1 << (fsel_bit_pos*3));
+
+  /* Set the gpio register gpset_n to on */
+  *gpset_register |= (1<<pin);
+  return;
+}
+
+static void gpio_pin_off(unsigned int pin){
+  unsigned int * gpio_off_register = (unsigned int*)((char *)gpio_registers_addr +0x28);
+  *gpio_off_register |= (1 << pin);
+  return;
+}
+
+void lightplay_1(void) {
+    #ifdef DEBUG
+    printk("DEBUG: lightplay_1 invoked\n");
+    #endif
+    gpio_pin_on(16);
+    msleep(500);
+    gpio_pin_on(20);
+    gpio_pin_off(16);
+    msleep(500);
+    gpio_pin_on(21);
+    gpio_pin_off(20);
+    msleep(500);
+    gpio_pin_off(21);
+}
+
+void lightplay_2(void) {
+    #ifdef DEBUG
+    printk("DEBUG: lightplay_2 invoked\n");
+    #endif
+    gpio_pin_on(21);
+    msleep(500);
+    gpio_pin_on(20);
+    gpio_pin_off(21);
+    msleep(500);
+    gpio_pin_on(16);
+    gpio_pin_off(21);
+    msleep(500);
+    gpio_pin_off(16);
 }
 
 /* Interrupt service routine - this is executed when the interrupt is triggered */
@@ -246,39 +306,47 @@ static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t
             printk("WARNING: The requested lamp state was %d, you can only choose between state 0 and 7!\n", requested_lamp_state);
             return size;
         }
-        printk("DEBUG: Start atomic set");
         atomic_set(&printer_state, (int) requested_lamp_state);
-        printk("DEBUG: Finish atomic set");
         switch (requested_lamp_state) {
             case 0:
                 printk("INFO: Lamp is going to state 0\n");
+                gpio_pin_on(16);
                 break;
             case 1:
                 printk("INFO: Lamp is going to state 1\n");
+                gpio_pin_on(20);
                 break;
             case 2:
                 printk("INFO: Lamp is going to state 2\n");
+                gpio_pin_on(21);
                 break;
             case 3:
                 printk("INFO: Lamp is going to state 3\n");
+                gpio_pin_off(16);
                 break;
             case 4:
                 printk("INFO: Lamp is going to state 4\n");
+                gpio_pin_off(20);
                 break;
             case 5:
                 printk("INFO: Lamp is going to state 5\n");
+                gpio_pin_off(21);
                 break;
             case 6:
                 printk("INFO: Lamp is going to state 6\n");
+                lightplay_1();
                 break;
             case 7:
                 printk("INFO: Lamp is going to state 7\n");
+                lightplay_2();
                 break;
             default:
                 printk("ERROR: Received invalid state!\n");
                 break;
         }
-        printk("DEBUG: Finished\n");
+        #ifdef DEBUG
+        printk("DEBUG: Finished LED setting\n");
+        #endif
         return size;
 }
 
@@ -295,6 +363,14 @@ static struct file_operations fops =
 /* Init and exit functions */
 static int __init gpio_lamp_init(void) {
     printk("INFO: Initialize 3D printer lamp\n");
+
+    /* For the direct register control */
+    // Assign the physical adress through the MMU (Memory Management Unit) to the variable to access it in the write functions
+    gpio_registers_addr = (int*)ioremap(BCM2837_GPIO_ADDRESS, PAGE_SIZE); // https://os.inf.tu-dresden.de/l4env/doc/html/dde_linux/group__mod__res.html#gd8fce5b58ae2fa9f4158fe408610ccc5
+    if (gpio_registers_addr == NULL) {
+      printk("Failed to map GPIO memory to driver");
+      return -1;
+    }
 
     /* setup the GPIO - using the linux provided GPIO abstraction (NOT direct register programming) */
     // input pin for the interrupt
