@@ -58,7 +58,7 @@ unsigned int access_counter = 0;
 atomic_t printer_state; // ATOMIC_INIT(-1);
 
 /* Direct register access to enlight the LEDs */
-#define BCM2837_GPIO_ADDRESS 0x3F200000
+#define BCM2837_GPIO_ADDRESS 0xFE200000
 static unsigned int * gpio_registers_addr = NULL;
 
 /* Utility functions */

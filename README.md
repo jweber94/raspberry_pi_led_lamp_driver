@@ -24,6 +24,11 @@ Maybe I will enhance the lighting by sending telegram messages to my phone to ge
     - There is a difference between the GPIO name (which corresponds to the BCM GPIO interface from the BCM2835 datasheet [2]) and the GPIO number on the board. If we want to do direct register programming or use the linux GPIO interface, we need to refer to the GPIO names as pins and *not* to the enumeration from the top left to the bottom right!
 + We use the six pins at the bottom of the GPIO interface (board pin 35, 36, 37, 38, 39 and 40; GPIO 19, GPIO 16, GPIO26, GPIO 20, Ground at pin 39, GPIO 21)
 
+## Finding the correct registers
++ The Raspberry Pi 4 uses the BCM 2711 SOC and we need to translate the bus addresses (that you can lookup within the datasheet of the BCM 2711) to its hardware addresses!
+	- See https://forums.raspberrypi.com/viewtopic.php?t=283456 as an explaination
+	- See the datasheet https://datasheets.raspberrypi.com/bcm2711/bcm2711-peripherals.pdf on page 66 for the GPIO interface bus and the page 5 for the mapping of the bus addresses to the hardware addresses
+
 ### Mechanical Design
 + TBD and after that it can be found within the folder `./3D_model`
 + The lamp housing is printed on my creality Ender 3 S1 with PTEG filament. See [my cura profile](https://github.com/jweber94/3d_printing/blob/master/cura_profiles/221108_ender3s1_pteg_profile.curaprofile) for the printer settings. I printed with [this](https://www.amazon.de/GEEETECH-Filament-Spool-3D-Drucker-Schwarz/dp/B08BZPZRFK) filament and it worked quiet well.
