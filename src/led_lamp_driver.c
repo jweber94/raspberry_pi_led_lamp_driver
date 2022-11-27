@@ -22,6 +22,8 @@
 #define IRQ_PIN_OUTPUT_NO 19
 
 #define DEBUG // outcomment this if you want to generate a release version
+#define RPi4
+// #define RPi2B
 
 static const char * driver_name = "led_lamp_driver";
 
@@ -55,11 +57,19 @@ struct mutex dev_file_mutex;
 static char user_interface_buffer [512]; // one char holds 8 bit (aka one byte) of memory - stack allocation is needed to avoid freeing heap memory while another user space application is accessing it or complicating the code because we do opener tracking
 struct mutex user_buffer_mutex;
 unsigned int access_counter = 0;
-atomic_t printer_state = ATOMIC_INIT(-1);
+atomic_t last_printer_command = ATOMIC_INIT(-1);
+
+struct mutex lamp_state_mutex;
+bool lamp_state [3] = {false, false, false};
 
 /* Direct register access to enlight the LEDs */
-#define BCM2711_GPIO_ADDRESS 0xFE200000 // RPi 4 (https://datasheets.raspberrypi.com/bcm2711/bcm2711-peripherals.pdf)
-// #define BCM2836_GPIO_ADDRESS 0x3F200000UL // RPi 2 Model B
+#ifdef RPi4 
+    #define GPIO_ADDRESS 0xFE200000 // RPi 4 (https://datasheets.raspberrypi.com/bcm2711/bcm2711-peripherals.pdf)
+#endif
+# ifdef RPi2B
+    #define GPIO_ADDRESS 0x3F200000UL // RPi 2 Model B
+#endif
+
 static unsigned int * gpio_registers_addr = NULL;
 unsigned int lamp_pins [3] = {16, 20, 21};
 
@@ -140,7 +150,7 @@ void init_direct_register_leds(void) {
 
         // reset the gpioset and gpioclr registers
         unsigned int * gpio_off_register = (unsigned int*)((char *)gpio_registers_addr +0x28);
-        *gpio_off_register |= (1 << lamp_pins[idx]);
+        *gpio_off_register = (1 << lamp_pins[idx]);
     }
 }
 
@@ -281,64 +291,103 @@ static int syscall_close(struct inode *inode, struct file *file)
 
 static ssize_t syscall_read(struct file *filp, char __user *userp, size_t size, loff_t *off)
 {       
+    // TODO: Maybe deliver last_printer_command back as well - therefore it is atomic (and historically grown)
     #ifdef DEBUG
         printk("DEBUG: printer_lamp read was called!\n");
     #endif
-    uint32_t current_state;
-    size_t not_copied = 0;
-    current_state = atomic_read(&printer_state);
-    printk("DEBUG: Returning current state %ld", current_state);
-    if (current_state > 7 || current_state < 0) { 
-        return simple_read_from_buffer(userp, size, off, "Invalid state\n", 14);
-    } else {
-        return simple_read_from_buffer(userp, size, off, &current_state, sizeof(current_state)); // 4 bit because https://raspberry-projects.com/pi/programming-in-c/memory/variables
+    return simple_read_from_buffer(userp, size, off, &lamp_state, sizeof(lamp_state));
+}
+
+void transform_state(unsigned int aimed_state, bool change_state);
+
+void clear_all_leds_temp(bool rewrite_state) {
+    int idx;
+    for (idx = 0; idx < 3; idx++) {
+        printk("DEBUG: idx + 3 = %d", (idx + 3));
+        if (rewrite_state)
+            transform_state(idx + 3, true);
+        else
+            transform_state(idx + 3, false);
     }
 }
 
-void transform_state(unsigned int aimed_state, unsigned int last_state) {
+void recreate_state(void) {
+    int idx;
+    bool turn_on = false;
+    for (idx = 0; idx < 3; idx++) {
+        if (lamp_state[idx] == true) {
+            transform_state(idx, false); // we have a dualism between the index and the user space command within transform_state
+        }
+    }
+}
+
+void transform_state(unsigned int aimed_state, bool change_state) {
+    mutex_lock(&lamp_state_mutex);
     switch (aimed_state) {
         case 0:
-            printk("INFO: Lamp is going to state 0\n");
+            printk("INFO: Lamp executes command 0\n");
             gpio_pin_on(16);
+            if (change_state)
+                lamp_state[0] = true;
             break;
         case 1:
-            printk("INFO: Lamp is going to state 1\n");
+            printk("INFO: Lamp executes command 1\n");
             gpio_pin_on(20);
+            if (change_state)
+                lamp_state[1] = true;
             break;
         case 2:
-            printk("INFO: Lamp is going to state 2\n");
+            printk("INFO: Lamp executes command 2\n");
             gpio_pin_on(21);
+            if (change_state)
+                lamp_state[2] = true;
             break;
         case 3:
-            printk("INFO: Lamp is going to state 3\n");
+            printk("INFO: Lamp executes command 3\n");
             gpio_pin_off(16);
+            if (change_state)
+                lamp_state[0] = false;
             break;
         case 4:
-            printk("INFO: Lamp is going to state 4\n");
+            printk("INFO: Lamp executes command 4\n");
             gpio_pin_off(20);
+            if (change_state)
+                lamp_state[1] = false;
             break;
         case 5:
-            printk("INFO: Lamp is going to state 5\n");
+            printk("INFO: Lamp executes command 5\n");
             gpio_pin_off(21);
+            if (change_state)
+                lamp_state[2] = false;
             break;
         case 6:
-            printk("INFO: Lamp is going to state 6\n");
+            printk("INFO: Lamp executes command 6\n");
             lightplay_1();
+            mutex_unlock(&lamp_state_mutex);
+            clear_all_leds_temp(false);
             if (aimed_state != UINT_MAX) {
-                transform_state(last_state, 0);
+                recreate_state();
             }
             break;
         case 7:
-            printk("INFO: Lamp is going to state 7\n");
+            printk("INFO: Lamp executes command 7\n");
             lightplay_2();
+            mutex_unlock(&lamp_state_mutex);
+            clear_all_leds_temp(false);
             if (aimed_state != UINT_MAX) {
-                transform_state(last_state, 0);
+                recreate_state();
             }
+            break;
+        case 8:
+            printk("INFO: Lamp executes command 8 - reset all\n");
+            mutex_unlock(&lamp_state_mutex);
+            clear_all_leds_temp(true);
             break;
         default:
             printk("ERROR: Received invalid state!\n");
             break;
         }
+        mutex_unlock(&lamp_state_mutex);
 }
 
 static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t size, loff_t *off)
@@ -346,8 +395,7 @@ static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t
         #ifdef DEBUG
             printk("DEBUG: printer_lamp write was called\n");
         #endif
-        unsigned int requested_lamp_state = UINT_MAX;
-        uint32_t current_state;
+        unsigned int requested_lamp_command = UINT_MAX;
         // reset the user interaction memory
         mutex_lock(&user_buffer_mutex);
         /* CAUTION: In order to avoid an overwriting by another user space application, we need to parse out the relevant information while the lock is still active - the processing can then be done while the lock is released in order to not lock for an unnecessary long time */
@@ -359,25 +407,21 @@ static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t
         #ifdef DEBUG
             printk("DEBUG: Data from user space is: %s", user_interface_buffer);
         #endif
-        if (sscanf(user_interface_buffer, "%d", &requested_lamp_state) != 1) { // https://cplusplus.com/reference/cstdio/sscanf/
+        if (sscanf(user_interface_buffer, "%d", &requested_lamp_command) != 1) { // https://cplusplus.com/reference/cstdio/sscanf/
             printk("ERROR: Inproper data format submitted by the user space application!\n");
             mutex_unlock(&user_buffer_mutex);
             return size;
         }
         mutex_unlock(&user_buffer_mutex);
 
-        if (requested_lamp_state < 0 || requested_lamp_state > 7) {
-            printk("WARNING: The requested lamp state was %d, you can only choose between state 0 and 7!\n", requested_lamp_state);
+        if (requested_lamp_command < 0 || requested_lamp_command > 8) {
+            printk("WARNING: The requested lamp state was %d, you can only choose between state 0 and 7!\n", requested_lamp_command);
             return size;
         }
 
-        if (requested_lamp_state == 6 || requested_lamp_state == 7) {
-            current_state = atomic_read(&printer_state);
-            transform_state(requested_lamp_state, current_state);
-        } else {
-            atomic_set(&printer_state, (int) requested_lamp_state);
-            transform_state(requested_lamp_state, current_state);
-        }
+        atomic_set(&last_printer_command, (int) requested_lamp_command);
+        transform_state(requested_lamp_command, true);
+
         #ifdef DEBUG
         printk("DEBUG: Finished LED setting\n");
         #endif
@@ -400,7 +444,7 @@ static int __init gpio_lamp_init(void) {
 
     /* For the direct register control */
     // Assign the physical adress through the MMU (Memory Management Unit) to the variable to access it in the write functions
-    gpio_registers_addr = (int*)ioremap(BCM2837_GPIO_ADDRESS, PAGE_SIZE); // https://os.inf.tu-dresden.de/l4env/doc/html/dde_linux/group__mod__res.html#gd8fce5b58ae2fa9f4158fe408610ccc5
+    gpio_registers_addr = (int*)ioremap(GPIO_ADDRESS, PAGE_SIZE); // https://os.inf.tu-dresden.de/l4env/doc/html/dde_linux/group__mod__res.html#gd8fce5b58ae2fa9f4158fe408610ccc5
     if (gpio_registers_addr == NULL) {
       printk("Failed to map GPIO memory to driver");
       return -1;
@@ -471,9 +515,10 @@ static int __init gpio_lamp_init(void) {
 
     // secure user buffer if more then one user space application is accessing it at the same time
     mutex_init(&user_buffer_mutex);
-    atomic_set(&printer_state, UINT_MAX);
+    atomic_set(&last_printer_command, UINT_MAX);
 
     // create direct register start state
+    mutex_init(&lamp_state_mutex);
     init_direct_register_leds();
     
     printk("INFO: Initialize 3D printer lamp successful\n");
@@ -516,4 +561,4 @@ module_exit(gpio_lamp_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jens Weber");
 MODULE_DESCRIPTION("Kernel driver for the 3D printer lamp.");
-MODULE_VERSION("0.0.1");
+MODULE_VERSION("0.0.2");
