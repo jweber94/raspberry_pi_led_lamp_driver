@@ -58,7 +58,8 @@ unsigned int access_counter = 0;
 atomic_t printer_state = ATOMIC_INIT(-1);
 
 /* Direct register access to enlight the LEDs */
-#define BCM2837_GPIO_ADDRESS 0xFE200000
+#define BCM2711_GPIO_ADDRESS 0xFE200000 // RPi 4 (https://datasheets.raspberrypi.com/bcm2711/bcm2711-peripherals.pdf)
+// #define BCM2836_GPIO_ADDRESS 0x3F200000UL // RPi 2 Model B
 static unsigned int * gpio_registers_addr = NULL;
 unsigned int lamp_pins [3] = {16, 20, 21};
 
@@ -294,9 +295,51 @@ static ssize_t syscall_read(struct file *filp, char __user *userp, size_t size, 
     }
 }
 
-//void transform_state(unsigned int aimed_state) {
-    
-//}
+void transform_state(unsigned int aimed_state, unsigned int last_state) {
+    switch (aimed_state) {
+        case 0:
+            printk("INFO: Lamp is going to state 0\n");
+            gpio_pin_on(16);
+            break;
+        case 1:
+            printk("INFO: Lamp is going to state 1\n");
+            gpio_pin_on(20);
+            break;
+        case 2:
+            printk("INFO: Lamp is going to state 2\n");
+            gpio_pin_on(21);
+            break;
+        case 3:
+            printk("INFO: Lamp is going to state 3\n");
+            gpio_pin_off(16);
+            break;
+        case 4:
+            printk("INFO: Lamp is going to state 4\n");
+            gpio_pin_off(20);
+            break;
+        case 5:
+            printk("INFO: Lamp is going to state 5\n");
+            gpio_pin_off(21);
+            break;
+        case 6:
+            printk("INFO: Lamp is going to state 6\n");
+            lightplay_1();
+            if (aimed_state != UINT_MAX) {
+                transform_state(last_state, 0);
+            }
+            break;
+        case 7:
+            printk("INFO: Lamp is going to state 7\n");
+            lightplay_2();
+            if (aimed_state != UINT_MAX) {
+                transform_state(last_state, 0);
+            }
+            break;
+        default:
+            printk("ERROR: Received invalid state!\n");
+            break;
+        }
+}
 
 static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t size, loff_t *off)
 {       
@@ -330,53 +373,10 @@ static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t
 
         if (requested_lamp_state == 6 || requested_lamp_state == 7) {
             current_state = atomic_read(&printer_state);
-        }
-
-        printk("DEBUG: Current state is %d", current_state);
-
-        atomic_set(&printer_state, (int) requested_lamp_state);
-        switch (requested_lamp_state) {
-            case 0:
-                printk("INFO: Lamp is going to state 0\n");
-                gpio_pin_on(16);
-                break;
-            case 1:
-                printk("INFO: Lamp is going to state 1\n");
-                gpio_pin_on(20);
-                break;
-            case 2:
-                printk("INFO: Lamp is going to state 2\n");
-                gpio_pin_on(21);
-                break;
-            case 3:
-                printk("INFO: Lamp is going to state 3\n");
-                gpio_pin_off(16);
-                break;
-            case 4:
-                printk("INFO: Lamp is going to state 4\n");
-                gpio_pin_off(20);
-                break;
-            case 5:
-                printk("INFO: Lamp is going to state 5\n");
-                gpio_pin_off(21);
-                break;
-            case 6:
-                printk("INFO: Lamp is going to state 6\n");
-                lightplay_1();
-                break;
-            case 7:
-                printk("INFO: Lamp is going to state 7\n");
-                lightplay_2();
-                if (current_state != UINT_MAX) {
-                    gpio_pin_on(current_state);
-                }
-                break;
-            default:
-                printk("ERROR: Received invalid state!\n");
-                if (current_state != UINT_MAX) {
-                    gpio_pin_on(current_state);
-                }
-                break;
+            transform_state(requested_lamp_state, current_state);
+        } else {
+            atomic_set(&printer_state, (int) requested_lamp_state);
+            transform_state(requested_lamp_state, current_state);
         }
         #ifdef DEBUG
         printk("DEBUG: Finished LED setting\n");
@@ -516,4 +516,4 @@ module_exit(gpio_lamp_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Jens Weber");
 MODULE_DESCRIPTION("Kernel driver for the 3D printer lamp.");
-MODULE_VERSION("0.0.0");
+MODULE_VERSION("0.0.1");
