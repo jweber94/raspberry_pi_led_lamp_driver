@@ -55,11 +55,14 @@ struct mutex dev_file_mutex;
 static char user_interface_buffer [512]; // one char holds 8 bit (aka one byte) of memory - stack allocation is needed to avoid freeing heap memory while another user space application is accessing it or complicating the code because we do opener tracking
 struct mutex user_buffer_mutex;
 unsigned int access_counter = 0;
-atomic_t printer_state; // ATOMIC_INIT(-1);
+atomic_t printer_state = ATOMIC_INIT(-1);
 
 /* Direct register access to enlight the LEDs */
 #define BCM2837_GPIO_ADDRESS 0xFE200000
 static unsigned int * gpio_registers_addr = NULL;
+unsigned int lamp_pins [3] = {16, 20, 21};
+
+unsigned int lightplay_time = 100;
 
 /* Utility functions */
 bool check_file_existance(void) {
@@ -76,44 +79,31 @@ unsigned long calc_last_irq_invocation(unsigned long * old_jiff_ptr) {
     return diff_down;
 }
 
-static void gpio_pin_on(unsigned int pin) {
-  
-  /* Getting the demanded bits of the GPIO registers - I found this code on the internet */
-  unsigned int gpfsel_index_n = pin/10;
-  unsigned int fsel_bit_pos = pin%10;
-  unsigned int * gpfsel_n = gpio_registers_addr + gpfsel_index_n; // Get the correct GPFSEL register
-  
-  unsigned int * gpset_register = (unsigned int *)((char *) gpio_registers_addr + 0x1c); // the gpset_n register has the offset 0x1c from the gpfsel registers
-
-  /*  */
-  // setting all of the pin function selection bits to zeros
-  *gpfsel_n &= ~(7 << (fsel_bit_pos*3)); // 7 is 111 in binary, 111 is left shifted by the bit position and then inverted, so 000; The &= is a bitwise comparison and therefore sets every bit to zero
-  // setting the new value to the gpio (001 but with LSB)
-  *gpfsel_n |= (1 << (fsel_bit_pos*3));
-
-  /* Set the gpio register gpset_n to on */
-  *gpset_register |= (1<<pin);
-  return;
-}
-
 static void gpio_pin_off(unsigned int pin){
   unsigned int * gpio_off_register = (unsigned int*)((char *)gpio_registers_addr +0x28);
-  *gpio_off_register |= (1 << pin);
+  *gpio_off_register = (1 << pin);
   return;
 }
+
+static void gpio_pin_on(unsigned int pin) {
+  /* Set the gpio register gpset_n to on */
+  unsigned int * gpset_register = (unsigned int *)((char *) gpio_registers_addr + 0x1c);
+  *gpset_register = (1 << pin);
+}
+
 
 void lightplay_1(void) {
     #ifdef DEBUG
     printk("DEBUG: lightplay_1 invoked\n");
     #endif
     gpio_pin_on(16);
-    msleep(500);
-    gpio_pin_on(20);
+    msleep(lightplay_time);
     gpio_pin_off(16);
-    msleep(500);
-    gpio_pin_on(21);
+    gpio_pin_on(20);    
+    msleep(lightplay_time);
     gpio_pin_off(20);
-    msleep(500);
+    gpio_pin_on(21);
+    msleep(lightplay_time);
     gpio_pin_off(21);
 }
 
@@ -122,14 +112,35 @@ void lightplay_2(void) {
     printk("DEBUG: lightplay_2 invoked\n");
     #endif
     gpio_pin_on(21);
-    msleep(500);
+    msleep(lightplay_time);
+    gpio_pin_off(21);
     gpio_pin_on(20);
-    gpio_pin_off(21);
-    msleep(500);
+    msleep(lightplay_time);
+    gpio_pin_off(20);
     gpio_pin_on(16);
-    gpio_pin_off(21);
-    msleep(500);
+    msleep(lightplay_time);
     gpio_pin_off(16);
+}
+
+void init_direct_register_leds(void) {
+    /* Setting the registers to make the lamp pins GPIO output pins */
+    int idx;
+    for (idx = 0; idx < 3; idx++) {
+        printk("INFO: Setting pin %d to its initial lamp state", lamp_pins[idx]);
+        /* Getting the demanded bits of the GPIO registers - I found this code on the internet */
+        unsigned int gpfsel_index_n = lamp_pins[idx]/10;
+        unsigned int fsel_bit_pos = lamp_pins[idx]%10;
+        unsigned int * gpfsel_n = gpio_registers_addr + gpfsel_index_n; // Get the correct GPFSEL register
+    
+        // setting all of the pin function selection bits to zeros
+        *gpfsel_n &= ~(7 << (fsel_bit_pos*3)); // 7 is 111 in binary, 111 is left shifted by the bit position and then inverted, so 000; The &= is a bitwise comparison and therefore sets every bit to zero
+        // setting the new value to the gpio (001 but with LSB)
+        *gpfsel_n |= (1 << (fsel_bit_pos*3));
+
+        // reset the gpioset and gpioclr registers
+        unsigned int * gpio_off_register = (unsigned int*)((char *)gpio_registers_addr +0x28);
+        *gpio_off_register |= (1 << lamp_pins[idx]);
+    }
 }
 
 /* Interrupt service routine - this is executed when the interrupt is triggered */
@@ -157,6 +168,9 @@ static irq_handler_t lamp_shutdown_irq_handler(int irq, void *dev_id) {
 
 static irq_handler_t lamp_shutdown_irq_thrfn(int irq, void *dev_id) {
     mutex_lock(&dev_file_mutex);
+    if (lamp_activated) {
+        lightplay_2();
+    }
     // check if device file exists
     if (!check_file_existance()) {
         printk("ERROR: The device file for the LED lamp driver does not exist - skipping!\n");
@@ -230,7 +244,9 @@ static irq_handler_t lamp_detection_irq_thrfn(int irq, void *dev_id) {
         goto r_device;
     }
     lamp_activated = true;
-
+    
+    lightplay_1(); // light greetings after turning on the lamp
+    
     printk("INFO: Creating the /dev/printer_lamp device file sucessful\n");
     mutex_unlock(&dev_file_mutex);
     return (irq_handler_t) IRQ_HANDLED;
@@ -278,12 +294,17 @@ static ssize_t syscall_read(struct file *filp, char __user *userp, size_t size, 
     }
 }
 
+//void transform_state(unsigned int aimed_state) {
+    
+//}
+
 static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t size, loff_t *off)
 {       
         #ifdef DEBUG
             printk("DEBUG: printer_lamp write was called\n");
         #endif
-        unsigned int requested_lamp_state = UINT_MAX; 
+        unsigned int requested_lamp_state = UINT_MAX;
+        uint32_t current_state;
         // reset the user interaction memory
         mutex_lock(&user_buffer_mutex);
         /* CAUTION: In order to avoid an overwriting by another user space application, we need to parse out the relevant information while the lock is still active - the processing can then be done while the lock is released in order to not lock for an unnecessary long time */
@@ -306,6 +327,13 @@ static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t
             printk("WARNING: The requested lamp state was %d, you can only choose between state 0 and 7!\n", requested_lamp_state);
             return size;
         }
+
+        if (requested_lamp_state == 6 || requested_lamp_state == 7) {
+            current_state = atomic_read(&printer_state);
+        }
+
+        printk("DEBUG: Current state is %d", current_state);
+
         atomic_set(&printer_state, (int) requested_lamp_state);
         switch (requested_lamp_state) {
             case 0:
@@ -339,9 +367,15 @@ static ssize_t syscall_write(struct file *filp, const char __user *userp, size_t
             case 7:
                 printk("INFO: Lamp is going to state 7\n");
                 lightplay_2();
+                if (current_state != UINT_MAX) {
+                    gpio_pin_on(current_state);
+                }
                 break;
             default:
                 printk("ERROR: Received invalid state!\n");
+                if (current_state != UINT_MAX) {
+                    gpio_pin_on(current_state);
+                }
                 break;
         }
         #ifdef DEBUG
@@ -439,6 +473,9 @@ static int __init gpio_lamp_init(void) {
     mutex_init(&user_buffer_mutex);
     atomic_set(&printer_state, UINT_MAX);
 
+    // create direct register start state
+    init_direct_register_leds();
+    
     printk("INFO: Initialize 3D printer lamp successful\n");
     return 0;
 
