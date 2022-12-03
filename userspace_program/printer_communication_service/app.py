@@ -3,6 +3,7 @@
 import dbus
 import logging
 import argparse
+import configparser
 import time
 import requests
 
@@ -10,33 +11,55 @@ import requests
 ### Utilities ###
 #################
 
+# Octopi url
+PRINTER_STATE_RESOURCE = "/api/printer"
+
 # command line parser
 parser = argparse.ArgumentParser(description='Printer interaction program')
-parser.add_argument('--log_level', type=str, required=True, help='Log level (debug, info, warning, error, critical)')
+parser.add_argument('--config', type=str, required=True, help='Path to the config file for the service')
 command_line_args = parser.parse_args()
 
-def get_log_level():
-    received_log_level = command_line_args.log_level
-    if received_log_level == "debug":
-        return logging.DEBUG
-    elif received_log_level == "info":
-        return logging.INFO
-    elif received_log_level == "warning":
-        return logging.WARNING
-    elif received_log_level == "error":
-        return logging.ERROR
-    elif received_log_level == "cirical":
-        return logging.CRITICAL
-    else:
-        print("ERROR: Received invalid log level. Please review the app invocation")
-        exit(1)
+class ConfigExtractor:
+    def __init__(self):
+        self.conf_parser = configparser.ConfigParser()
+        try:
+            self.conf_parser.read(command_line_args.config)
+        except:
+            print("ERROR: Could not read config file. Make sure that you handed over a valid path and ini-file.")
+            exit(1)
 
+        self.init_logger()
 
-def init_logger():
-    # Logger init
-    logging.basicConfig(format='%(levelname)s:%(message)s', level=get_log_level())
-    logging.info("Logger initialized")
+    def get_log_level(self):
+        received_log_level = self.conf_parser['PRINTERSERVICE']['log_level']
+        if received_log_level == "debug":
+            return logging.DEBUG
+        elif received_log_level == "info":
+            return logging.INFO
+        elif received_log_level == "warning":
+            return logging.WARNING
+        elif received_log_level == "error":
+            return logging.ERROR
+        elif received_log_level == "cirical":
+            return logging.CRITICAL
+        else:
+            print("ERROR: Received invalid log level. Please review the app invocation")
+            exit(1)
+
+    def init_logger(self):
+        # Logger init
+        logging.basicConfig(format='%(levelname)s:%(message)s', level=self.get_log_level())
+        logging.info("Logger initialized")
+
+    def get_octopi_ip(self):
+        return self.conf_parser['PRINTERSERVICE']['ip_adress']
     
+    def get_octopi_port(self):
+        return self.conf_parser['PRINTERSERVICE']['port']
+
+    def get_octopi_api_key(self):
+        return self.conf_parser['PRINTERSERVICE']['api_key']
+
 ##############################
 ### DBus interaction class ###
 ##############################
@@ -72,20 +95,52 @@ class DBusLampBridge:
         self.printer_lamp_interface.SetBrightness(state)
         
 class OctoprintJsonPoller():
-    def __init__(self, dbus_bridge):
-        self.current_octo_state = None
+    def __init__(self, dbus_bridge, octo_api_key, ip_addr, port=80):
         self.dbus_instance = dbus_bridge
+        self.octo_api_key = octo_api_key
+        self.ip_addr = ip_addr
+        self.port = port
         logging.info("Octoprint poller initialized successfully")
 
+    def get_printer_json(self):
+        header = {'X-Api-Key': self.octo_api_key}
+        url = 'http://' + self.ip_addr + PRINTER_STATE_RESOURCE # + 'foobar'
+        resp = requests.get(url, headers=header).json()
+        if 'error' in resp.keys():
+            logging.warning("Invalid response from octoprint!")
+        return resp
+
+    def destil_printer_state(self, octoprint_json):
+        return {'bed_temp': 0, 'tool_tmp': 0, 'global_state': 'printing'}
+
+    def calcuate_lamp_state(self, destilled_state):
+        return 6
+
+    def polling_loop(self):
+        while True:
+            # octpoprint
+            printer_json = self.get_printer_json()
+            destilled_state = self.destil_printer_state(printer_json)
+            aimed_lamp_state = self.calcuate_lamp_state(destilled_state)
+            ## FIXME
+            # lamp state
+            tmp_state = self.dbus_instance.get_state()
+            print("tmp_state is: ", tmp_state)
+            self.dbus_instance.set_state(0)
+            time.sleep(2)
+            self.dbus_instance.set_state(1)
+            time.sleep(2)
+
+    def start_polling_loop(self):
+        self.polling_loop()
+
 def main():
-    init_logger()
+    config_obj = ConfigExtractor()
     logging.info("Starting: Try to connect with DBus and the printer lamp interaction service...")
     dbus_bright = DBusLampBridge()
-    octoprint_interface_instance = OctoprintJsonPoller(dbus_bright)
-    current_state = dbus_bright.get_state()
-    print(current_state)
-
-    logging.info("String up the app successful. Waiting for events...")
+    octoprint_interface_instance = OctoprintJsonPoller(dbus_bright, config_obj.get_octopi_api_key(), config_obj.get_octopi_ip(), config_obj.get_octopi_port())
+    logging.info("String up the app successful. Looking out for state changes...")
+    octoprint_interface_instance.start_polling_loop()
 
 if __name__ == "__main__":
     main()
