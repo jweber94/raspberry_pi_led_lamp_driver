@@ -51,3 +51,6 @@ The state deduction from the GET request is done by the comparison of the temper
 
 ## Configuration
 The configuration is done by a config file which we be handed over by the only one command line argument of the program. During installation, the config file will be placed into the folder `/etc/octolamp/lamp_config`.
+
+## TODOs:
++ Connect to signal on state change of the printer lamp via D-Bus

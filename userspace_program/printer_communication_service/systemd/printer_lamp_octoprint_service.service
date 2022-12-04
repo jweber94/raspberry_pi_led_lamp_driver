@@ -1,0 +1,10 @@
+[Unit]
+Description=Printer lamp octoprint interaction service
+
+[Service]
+ExecStart=/usr/lib/printer_lamp/app.py --config /etc/printer_lamp/lamp_config.ini
+Restart=on-failure
+StartLimitBurst=0
+
+[Install]
+WantedBy=dbus.service

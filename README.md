@@ -81,14 +81,7 @@ Maybe I will enhance the lighting by sending telegram messages to my phone to ge
 + https://docs.octoprint.org/en/master/api/datamodel.html#sec-api-datamodel-printer-state (Octoprint API - printer state description)
 
 # Next ToDos
-+ Implement basic driver with a char file in `/dev` that is auto created DONE
-+ Implement Interrupt with GPIO (https://www.youtube.com/watch?v=oCTNuwO9_FA&list=PLCGpd0Do5-I3b5TtyqeF1UdyD4C-S-dMa&index=12) but without blocking the read and write DONE
-+ Make the Turn on only turn on if the switch is actually turned on --> Maybe listen to the input pins for a while! DONE
 + Document what I have learned about Udev and the connection of device files with the inode in the background
     * `/etc/udev/rules.d/99-com.rules`
     * `KERNEL=="printer_lamp", GROUP="printer_lamp", MODE="0777"`
-+ Implement Interrupt with GPIO direct registers
-+ Implement the LED enlighting with direct registers but without the coupleing to the interrupt
-+ Make the coupleing to the interrupt (creating the `/dev` file within the interrupt)
-+ Implement the reset to wait for the interrupt after the lamp is disconnected
-+ Create debian package for installing the driver
++ Create script that copies everything to a folder structure that can be converter to a debian package to make the printer lamp completly installable via dpkg
