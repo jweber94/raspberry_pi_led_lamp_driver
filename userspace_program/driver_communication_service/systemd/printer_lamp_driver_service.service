@@ -1,0 +1,10 @@
+[Unit]
+Description=Printer lamp driver interaction service
+
+[Service]
+ExecStart=/usr/lib/printer_lamp/driver_interaction
+Restart=on-failure
+StartLimitBurst=0
+
+[Install]
+WantedBy=dbus.service

@@ -2,6 +2,7 @@ import logging
 
 class MovingAvgRingbuffer:
     def __init__(self, capacity):
+        # See https://towardsdatascience.com/circular-queue-or-ring-buffer-92c7b0193326 for inspiration to the used ringbuffer-like moving avg calculation
         self.queue = [None] * capacity # init with empty array
         self.head = 0
         self.tail = 0
