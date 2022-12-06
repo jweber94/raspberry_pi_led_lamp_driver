@@ -12,9 +12,10 @@ namespace printer_lamp {
             CommandLineParser(int & argc, const char * argv []);
             CommandLineParser() = delete;
         
-            const bridge_config get_config() const;
+            bridge_config get_config();
         private:
             variables_map m_variables_map;
+            bridge_config m_bridge_config;
 
     };
 

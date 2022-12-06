@@ -5,10 +5,12 @@
 #include <memory>
 #include <sdbus-c++/sdbus-c++.h>
 
+#include "utils.hpp"
+
 namespace printer_lamp {
     class DriverDbusBridge {
         public:
-            DriverDbusBridge(std::unique_ptr<sdbus::IConnection>& connection, std::string & interface_name, std::string & object_path);
+            DriverDbusBridge(std::unique_ptr<sdbus::IConnection>& connection, const bridge_config& dbus_config);
             DriverDbusBridge() = delete;
 
             bool set_driver_state(const unsigned int & state);
@@ -22,5 +24,7 @@ namespace printer_lamp {
             std::unique_ptr<sdbus::IConnection>& m_dbus_connection_ref;
             sdbus::IObject* m_dbus_object;
 
-        };
+            const bridge_config & m_dbus_config;
+
+    };
 } /* namespace printer_lamp */

@@ -2,6 +2,7 @@
 
 #include <boost/program_options.hpp>
 #include <iostream>
+#include <INIReader.h>
 
 namespace printer_lamp {
 
@@ -28,21 +29,19 @@ namespace printer_lamp {
         }
     }
 
-    const bridge_config CommandLineParser::get_config() const {
-        bridge_config parsing_result;
-
-        // TODO: Use ini parser and m_variables_map
-        /*
-
-        else if (m_variables_map.count("age"))
-            std::cout << "Age: " << m_variables_map["age"].as<int>() << '\n';
-        else if (m_variables_map.count("pi"))
-            std::cout << "Pi: " << m_variables_map["pi"].as<float>() << '\n';
-        */
+    bridge_config CommandLineParser::get_config() {
+        if (m_bridge_config.interface_name == "" && m_bridge_config.object_path == "") {
+            try {
+                std::string path_to_config = m_variables_map["config_path"].as<std::string>();
+                INIReader reader(path_to_config);
+                m_bridge_config.interface_name =  reader.Get("DRIVERSERVICE", "interface_name", "UNKNOWN");
+                m_bridge_config.object_path = reader.Get("DRIVERSERVICE", "object_path", "UNKNOWN");
+            } catch (...) {
+                std::cout << "Could not parse config file\n";
+                exit(1);
+            }
+        }
         
-        parsing_result.interface_name = "Foo";
-        parsing_result.object_path = "Bar";
-
-        return parsing_result;
+        return m_bridge_config;
     }
 }
