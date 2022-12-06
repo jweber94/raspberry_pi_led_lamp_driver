@@ -5,12 +5,12 @@ class PocoTimerConan(ConanFile):
    requires = (
       "boost/1.80.0",
       "cpputest/4.0",
-      "dbus/1.15.2"
+      "sdbus-cpp/1.2.0"
    ) # comma-separated list of requirements
    build_requires = (
       "boost/1.80.0",
       "cpputest/4.0", 
-      "dbus/1.15.2"
+      "sdbus-cpp/1.2.0"
    )
    generators = "cmake", "gcc", "txt"
 
