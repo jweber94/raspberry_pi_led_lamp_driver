@@ -46,3 +46,6 @@ build_type=Release
 + Place `./config/jens.printerlamp.driver_interaction.conf` at `/etc/dbus-1/system.d`
 + Start command from within `./build/bin`:
     - `$ sudo ./driver_interaction --config_path ../../config/driver_service.ini`
+
+## DBus method registration
++ Every dbus method on an interface needs to have a input and return signature. The definition of the signature string can be looked up here: https://dbus.freedesktop.org/doc/dbus-specification.html (search for "signature   ")

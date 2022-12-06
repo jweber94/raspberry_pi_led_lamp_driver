@@ -13,16 +13,15 @@ namespace printer_lamp {
             DriverDbusBridge(std::unique_ptr<sdbus::IConnection>& connection, const bridge_config& dbus_config);
             DriverDbusBridge() = delete;
 
-            bool set_driver_state(const unsigned int & state);
-            void send_state_change_signal() const;
+            void set_driver_state(sdbus::MethodCall call);
+            int send_state_change_signal() const;
+            bool write_to_driver(int state) const;
 
         private:
-            const std::string m_object_path;
-            const std::string m_interface_name;
             unsigned int m_lamp_state;
 
             std::unique_ptr<sdbus::IConnection>& m_dbus_connection_ref;
-            sdbus::IObject* m_dbus_object;
+            std::unique_ptr<sdbus::IObject> m_dbus_object;
 
             const bridge_config & m_dbus_config;
 
