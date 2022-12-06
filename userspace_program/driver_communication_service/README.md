@@ -40,3 +40,4 @@ build_type=Release
 ## Configuration
 + The configuration file is placed within `./config/driver_service.ini`. This will be located under `/etc/octolamp/driver_service.ini`.
 + Besides the service configuration, we need to define a DBus configuration file like it is mentioned within [this](https://github.com/Kistler-Group/sdbus-cpp/blob/master/docs/systemd-dbus-config.md#dbus-configuration) explaination, to let the service connect to Dbus properly. This configuration file can also be found under `./config/jens.printerlamp.driver_interaction.conf`
+    - If you want to execute the binary from your terminal (without systemd integration), you need to execute it with root permissions to register the service on the dbus daemon. (`$ sudo ./build/bin/driver_interaction`)
