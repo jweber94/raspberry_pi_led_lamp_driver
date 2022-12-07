@@ -115,11 +115,22 @@ class OctoprintJsonPoller():
             aimed_lamp_state = self.calcuate_lamp_state(destilled_state)
 
             #D-Bus
-            if (int(aimed_lamp_state.value) + 1) != int(self.dbus_instance.get_state()):
-                self.dbus_instance.set_state(aimed_lamp_state.value)    
-                time.sleep(2)
-                self.dbus_instance.set_state(0)
-                time.sleep(2)
+            # driver_state = int(self.dbus_instance.get_lamp_state(aimed_lamp_state.value)) # maybe we will use this later
+            self.send_polling_state_to_driver(aimed_lamp_state.value)
+            time.sleep(5)
             
     def start_polling_loop(self):
         self.polling_loop()
+
+    def send_polling_state_to_driver(self, aimed_state):
+        self.dbus_instance.set_lamp_state(6) # lightplay 1
+        time.sleep(1)
+        if aimed_state == PrinterState.STANDBY:
+            self.dbus_instance.set_lamp_state(8) # reset all lights call
+            self.dbus_instance.set_lamp_state(0)
+        elif aimed_state == PrinterState.HEATING:
+            self.dbus_instance.set_lamp_state(8)
+            self.dbus_instance.set_lamp_state(1)
+        elif aimed_state == PrinterState.PRINTING:
+            self.dbus_instance.set_lamp_state(8)
+            self.dbus_instance.set_lamp_state(2)
