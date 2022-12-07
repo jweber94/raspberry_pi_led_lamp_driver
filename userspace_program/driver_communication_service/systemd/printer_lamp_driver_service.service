@@ -2,7 +2,7 @@
 Description=Printer lamp driver interaction service
 
 [Service]
-ExecStart=/usr/lib/printer_lamp/driver_interaction
+ExecStart=/usr/lib/printer_lamp/driver_interaction --config_path /etc/octolamp/driver_service.ini
 Restart=on-failure
 StartLimitBurst=0
 

@@ -17,6 +17,7 @@ Here is the settings.json:
 ## DBus library
 + Since the libdbus library says ["_You will save yourself a lot of pain if you use a higher-level wrapper or a reimplementation._"](https://www.freedesktop.org/wiki/Software/dbus/), I choose to use a more convenient to use library for the interaction with DBus, called [dbus-cpp](https://github.com/Kistler-Group/sdbus-cpp/blob/master/docs/using-sdbus-c++.md#integrating-sdbus-c-into-your-project)
     - To find a Dbus library that is applicable to your programming language, see https://www.freedesktop.org/wiki/Software/DBusBindings/
+    - Very good introduction: https://github.com/Kistler-Group/sdbus-cpp/blob/master/docs/using-sdbus-c++.md#integrating-sdbus-c-into-your-project
 
 ## Requirements
 + Since sdbus-cpp depends on libsystemd, we need to install the development headers on our target system for compilation: `$ sudo apt install libsystemd-dev`

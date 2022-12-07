@@ -4,7 +4,11 @@
 #include <chrono>
 #include <thread>
 #include <algorithm>
+#include <fstream>
+#include <filesystem>
 
+static inline const std::string DEVICE_FILE_PATH = "/home/jens/Desktop/testfile"; // For debugging
+// static inline const std::string DEVICE_FILE_PATH = "/dev/printer_lamp";
 
 namespace printer_lamp {
     DriverDbusBridge::DriverDbusBridge(std::unique_ptr<sdbus::IConnection>& connection, const bridge_config& dbus_config) : m_dbus_connection_ref{connection}, m_dbus_config{dbus_config} {
@@ -28,7 +32,7 @@ namespace printer_lamp {
             auto reply = call.createReply();
             if ((demanded_state == -1) || (std::find(m_possible_states.begin(), m_possible_states.end(), demanded_state) == std::end(m_possible_states))) {
                 std::cout << "Invalid request detected. Sending error reply\n";
-                reply << true;
+                reply << false;
                 reply.send();
                 return;
             }
@@ -68,9 +72,19 @@ namespace printer_lamp {
 
     bool DriverDbusBridge::write_to_driver(int state) const {
         std::cout << "Setting driver to state " << state << "\n";
-        // TODO: interact with driver file
-        return true;
-        // return false;
+        if (!std::filesystem::exists(DEVICE_FILE_PATH)) {
+            std::cout << "Driver file does not exist\n";
+            return false;
+        }
+
+        std::ofstream driver_file (DEVICE_FILE_PATH);
+        if (driver_file.is_open())
+        {
+          driver_file << state;
+          driver_file.close();
+          return true;
+        }
+        return false;
     }
 
 } /* namespace printer_lamp */
