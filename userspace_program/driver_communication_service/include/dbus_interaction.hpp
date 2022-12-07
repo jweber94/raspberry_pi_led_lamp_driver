@@ -1,7 +1,7 @@
 #pragma once
 
 #include <string>
-
+#include <array>
 #include <memory>
 #include <sdbus-c++/sdbus-c++.h>
 
@@ -22,6 +22,7 @@ namespace printer_lamp {
 
             std::unique_ptr<sdbus::IConnection>& m_dbus_connection_ref;
             std::unique_ptr<sdbus::IObject> m_dbus_object;
+            std::array<int, 8> m_possible_states = {0, 1, 2, 3, 4, 5, 6, 7};
 
             const bridge_config & m_dbus_config;
 

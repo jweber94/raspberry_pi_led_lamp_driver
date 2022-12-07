@@ -49,3 +49,10 @@ build_type=Release
 
 ## DBus method registration
 + Every dbus method on an interface needs to have a input and return signature. The definition of the signature string can be looked up here: https://dbus.freedesktop.org/doc/dbus-specification.html (search for "signature   ")
+
+## Testing service with the terminal
++ To send data to the dbus service, use the following terminal interface for the dbus convenience tools:
+    - `$ sudo dbus-send --system --type=method_call --print-reply --dest=jens.printerlamp.driver_interaction /3DP/printerlamp jens.printerlamp.set_lamp_state int32:1`
+    - Reference: https://dbus.freedesktop.org/doc/dbus-send.1.html
++ To listen to the emitted signal from the service, you can use the terminal interface dbus-monitor in the following way:
+    - `$ sudo dbus-monitor --system --monitor "type='signal',interface='jens.printerlamp'"`
