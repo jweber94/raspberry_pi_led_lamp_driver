@@ -63,6 +63,9 @@ Maybe I will enhance the lighting by sending telegram messages to my phone to ge
 ## Theory Linux driver programming
 + See `./theory_device_drivers` for details and the basis for design decisions
 
+## Creating the debian package
++ Just go to `$ cd ./scripts` and execute `$ make build_pkg`
+
 ## References
 + [1] https://de.pinout.xyz/
 + [2] https://www.raspberrypi.org/app/uploads/2012/02/BCM2835-ARM-Peripherals.pdf

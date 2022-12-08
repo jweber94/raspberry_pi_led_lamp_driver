@@ -1,0 +1,32 @@
+
+systemctl daemon-reload
+systemctl enable printer_lamp_driver_service.service
+systemctl enable printer_lamp_octoprint_service.service
+systemctl start printer_lamp_driver_service.service
+systemctl start printer_lamp_octoprint_service.service
+echo Foo=Bar >> /etc/udev/rules.d/99-com.rules
+ /home/jens/Desktop/lamp_project/raspberry_pi_led_lamp_driver/scripts/debian_pkg/DEBIAN/postinst
+
+Package: myPackage
+Version: 1.0.0-1
+Architecture: amd64
+Depends: 
+Maintainer: Jens Weber <jweber94@gmail.com>
+Description: Printer lamp debian package.
+ /home/jens/Desktop/lamp_project/raspberry_pi_led_lamp_driver/scripts/debian_pkg/DEBIAN/control
+
+systemctl daemon-reload
+systemctl enable printer_lamp_driver_service.service
+systemctl enable printer_lamp_octoprint_service.service
+systemctl start printer_lamp_driver_service.service
+systemctl start printer_lamp_octoprint_service.service
+echo Foo=Bar >> /etc/udev/rules.d/99-com.rules
+ /home/jens/Desktop/lamp_project/raspberry_pi_led_lamp_driver/scripts/debian_pkg/DEBIAN/postinst
+
+Package: myPackage
+Version: 1.0.0-1
+Architecture: amd64
+Depends: 
+Maintainer: Jens Weber <jweber94@gmail.com>
+Description: Printer lamp debian package.
+ /home/jens/Desktop/lamp_project/raspberry_pi_led_lamp_driver/scripts/debian_pkg/DEBIAN/control
