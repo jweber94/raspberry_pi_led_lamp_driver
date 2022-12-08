@@ -26,7 +26,9 @@ systemctl enable printer_lamp_driver_service.service
 systemctl enable printer_lamp_octoprint_service.service
 systemctl start printer_lamp_driver_service.service
 systemctl start printer_lamp_octoprint_service.service
-echo "Foo=Bar" >> /etc/udev/rules.d/99-com.rules" >> $(pwd)/printer_lamp/DEBIAN/postinst
+echo "
+# my custom rules
+KERNEL=="printer_lamp", GROUP="printer_lamp", MODE="0777"" >> /etc/udev/rules.d/99-com.rules" >> $(pwd)/printer_lamp/DEBIAN/postinst
 
 echo "
 Package: myPackage
