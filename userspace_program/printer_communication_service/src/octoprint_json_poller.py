@@ -23,6 +23,7 @@ class OctoprintJsonPoller():
         self.tool_temp_avg = None
 
         self.octoprint_printer_state = None
+        self.last_destilled_state = None
 
         self.bed_target_moving_avg_obj = MovingAvgRingbuffer(5)
         self.bed_actual_moving_avg_obj = MovingAvgRingbuffer(5)
@@ -35,8 +36,6 @@ class OctoprintJsonPoller():
         header = {'X-Api-Key': self.octo_api_key}
         url = 'http://' + self.ip_addr + PRINTER_STATE_RESOURCE
         resp = requests.get(url, headers=header).json()
-        if 'error' in resp.keys():
-            logging.warning("Invalid response from octoprint!")
         return resp
 
     def destil_printer_state(self, octoprint_json):
@@ -111,12 +110,20 @@ class OctoprintJsonPoller():
         while True:
             # octpoprint
             printer_json = self.get_printer_json()
+            if "error" in printer_json.keys():
+                logging.warning("Invalid response from octoprint!")
+                self.dbus_instance.set_lamp_state(8) # turn all lights off in case of invalid json from octoprint
+            
             destilled_state = self.destil_printer_state(printer_json)
             aimed_lamp_state = self.calcuate_lamp_state(destilled_state)
 
             #D-Bus
             # driver_state = int(self.dbus_instance.get_lamp_state(aimed_lamp_state.value)) # maybe we will use this later
-            self.send_polling_state_to_driver(aimed_lamp_state.value)
+            if self.last_destilled_state != destilled_state:
+                logging.info("Update dbus to state " + str(destilled_state))
+                self.send_polling_state_to_driver(aimed_lamp_state.value)
+                self.last_destilled_state = destilled_state
+            
             time.sleep(5)
             
     def start_polling_loop(self):
