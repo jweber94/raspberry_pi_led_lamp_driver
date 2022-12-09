@@ -13,8 +13,8 @@ class DBusLampBridge:
             try:
                 self.printer_lamp_proxy_dbus_test = self.system_bus.get_object('jens.printerlamp.driver_interaction', '/3DP/printerlamp')
                 self.printer_lamp_interface = dbus.Interface(self.printer_lamp_proxy_dbus_test, 'jens.printerlamp')
-                self.printer_lamp_interface.connect_to_signal('current_lamp_state', self.state_change_signal_cb)
-
+                #self.printer_lamp_interface.connect_to_signal('current_lamp_state', self.state_change_signal_cb)
+                #print("DEBUG 4")
                 self.connected_to_service = True
             
                 

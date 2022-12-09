@@ -10,6 +10,7 @@ set(SOURCE
 # setup conan
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(CONAN_SYSTEM_INCLUDES ON)
+set(CMAKE_CXX_STANDARD 17)
 include(${CMAKE_BINARY_DIR}/conanbuildinfo.cmake)
 conan_basic_setup()
 
@@ -17,6 +18,7 @@ add_executable(driver_interaction ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp ${SOU
 target_include_directories(driver_interaction PUBLIC ./include ${CONAN_INCLUDE_DIRS})
 target_link_libraries( driver_interaction
     ${CONAN_LIBS}
+     atomic
 )
 
 target_compile_features(driver_interaction PRIVATE cxx_std_17)

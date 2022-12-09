@@ -67,7 +67,7 @@ class OctoprintJsonPoller():
 
     def apply_lamp_state_rules(self, bed_temp, bed_temp_demanded, tool_temp, tool_temp_demanded, is_printing):
         is_target_temp_set = False
-        if (bed_temp_demanded != 0) and (tool_temp_demanded != 0):
+        if (bed_temp_demanded != 0.0) and (tool_temp_demanded != 0.0):
             is_target_temp_set = True
         
         # TODO: (Maybe) add this to the circular buffer objects and hand over their avg delta_t values to the apply_lamp_state_rules method
@@ -76,15 +76,19 @@ class OctoprintJsonPoller():
         
         log_str = "" # avoid log spam
         tmp_state = -1
+        is_delta_t_existing = (abs(delta_t_bed) > float(self.heating_threshold)) or (abs(delta_t_tool) > float(self.heating_threshold))
         if is_printing:
             tmp_state = PrinterState.PRINTING
             log_str = "printing"
-        elif (abs(delta_t_bed) > float(self.heating_threshold)) or (abs(delta_t_tool) > float(self.heating_threshold)) and not (is_printing) and is_target_temp_set:
+        elif is_delta_t_existing and (not is_printing) and is_target_temp_set:
             tmp_state = PrinterState.HEATING
             log_str = "heating"
         else:
             tmp_state = PrinterState.STANDBY
             log_str = "standby"
+        
+        logging.warning("tmp_state is " + str(tmp_state))
+
         if self.octoprint_printer_state != tmp_state:
             self.octoprint_printer_state = tmp_state
             logging.info("Printer state has changed to " + log_str)
@@ -112,7 +116,7 @@ class OctoprintJsonPoller():
             printer_json = self.get_printer_json()
             if "error" in printer_json.keys():
                 logging.warning("Invalid response from octoprint!")
-                self.dbus_instance.set_lamp_state(8) # turn all lights off in case of invalid json from octoprint
+                self.dbus_instance.set_state(8) # turn all lights off in case of invalid json from octoprint
             
             destilled_state = self.destil_printer_state(printer_json)
             aimed_lamp_state = self.calcuate_lamp_state(destilled_state)
@@ -130,14 +134,17 @@ class OctoprintJsonPoller():
         self.polling_loop()
 
     def send_polling_state_to_driver(self, aimed_state):
-        self.dbus_instance.set_lamp_state(6) # lightplay 1
+        self.dbus_instance.set_state(6) # lightplay 1
         time.sleep(1)
         if aimed_state == PrinterState.STANDBY:
-            self.dbus_instance.set_lamp_state(8) # reset all lights call
-            self.dbus_instance.set_lamp_state(0)
+            print("STANDBY")
+            self.dbus_instance.set_state(8) # reset all lights call
+            self.dbus_instance.set_state(0)
         elif aimed_state == PrinterState.HEATING:
-            self.dbus_instance.set_lamp_state(8)
-            self.dbus_instance.set_lamp_state(1)
+            print("HEATING")
+            self.dbus_instance.set_state(8)
+            self.dbus_instance.set_state(1)
         elif aimed_state == PrinterState.PRINTING:
-            self.dbus_instance.set_lamp_state(8)
-            self.dbus_instance.set_lamp_state(2)
+            print("PRINTING")
+            self.dbus_instance.set_state(8)
+            self.dbus_instance.set_state(2)

@@ -9,8 +9,8 @@
 #include <cstdint>
 #include <cstring>
 
-static inline const std::string DEVICE_FILE_PATH = "/home/jens/Desktop/testfile"; // For debugging
-// static inline const std::string DEVICE_FILE_PATH = "/dev/printer_lamp";
+//static inline const std::string DEVICE_FILE_PATH = "/home/jens/Desktop/testfile"; // For debugging
+static inline const std::string DEVICE_FILE_PATH = "/dev/printer_lamp";
 
 namespace printer_lamp {
     DriverDbusBridge::DriverDbusBridge(std::unique_ptr<sdbus::IConnection>& connection, const bridge_config& dbus_config) : m_dbus_connection_ref{connection}, m_dbus_config{dbus_config}, m_lamp_state{-1} {

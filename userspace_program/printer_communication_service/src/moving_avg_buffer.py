@@ -21,7 +21,7 @@ class MovingAvgRingbuffer:
         # add new value to the queue
         first_element = False
         if self.currently_used == self.capacity: # debug
-            logging.info("Delete old value")
+            logging.debug("Delete old value")
         if all(val is None for val in self.queue):
             self.queue[self.head] = val
             self.moving_avg = val
@@ -40,7 +40,7 @@ class MovingAvgRingbuffer:
         self.calc_moving_avg(self.queue[self.head], self.queue[self.tail])
 
         logging.debug("Currently used = " + str(self.currently_used))
-        logging.info("Added " + str(val) + " to the ringbuffer")
+        logging.debug("Added " + str(val) + " to the ringbuffer")
     
     def calc_moving_avg(self, x_t, x_t_n):
         # See https://de.wikipedia.org/wiki/Gleitender_Mittelwert
