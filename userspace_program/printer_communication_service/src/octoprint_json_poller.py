@@ -24,11 +24,12 @@ class OctoprintJsonPoller():
 
         self.octoprint_printer_state = None
         self.last_destilled_state = None
+        self.state_changed = None
 
-        self.bed_target_moving_avg_obj = MovingAvgRingbuffer(5)
-        self.bed_actual_moving_avg_obj = MovingAvgRingbuffer(5)
-        self.tool_target_moving_avg_obj = MovingAvgRingbuffer(5)
-        self.tool_actual_moving_avg_obj = MovingAvgRingbuffer(5)
+        self.bed_target_val = None
+        self.bed_actual_moving_avg_obj = MovingAvgRingbuffer(3)
+        self.tool_target_val = None
+        self.tool_actual_moving_avg_obj = MovingAvgRingbuffer(3)
 
         logging.info("Octoprint poller initialized successfully")
 
@@ -46,51 +47,53 @@ class OctoprintJsonPoller():
 
         # extract relevant information
         bed_temp_actual = octoprint_json.get('temperature').get('bed').get('actual')
-        bed_temp_target = octoprint_json.get('temperature').get('bed').get('target')
         tool_temp_actual = octoprint_json.get('temperature').get('tool0').get('actual')
-        tool_temp_target = octoprint_json.get('temperature').get('tool0').get('target')
 
         is_printing = octoprint_json.get('state').get('flags').get('printing')
 
-        if (bed_temp_target is None) or (bed_temp_actual is None) or (tool_temp_actual is None) or (tool_temp_target is None) or (is_printing is None):
+        # calculate moving average to avoid state jitter
+        self.tool_target_val = octoprint_json.get('temperature').get('tool0').get('target')
+        self.bed_target_val = octoprint_json.get('temperature').get('bed').get('target')
+        self.tool_actual_moving_avg_obj.enqueue(tool_temp_actual)
+        self.bed_actual_moving_avg_obj.enqueue(bed_temp_actual)
+
+        if (self.bed_target_val is None) or (bed_temp_actual is None) or (tool_temp_actual is None) or (self.tool_target_val is None) or (is_printing is None):
             logging.warning("Could not get the needed printer attributes for destiling the printer state") 
             return None
 
-        # calculate moving average to avoid state jitter
-        self.tool_target_moving_avg_obj.enqueue(tool_temp_target)
-        self.tool_actual_moving_avg_obj.enqueue(tool_temp_actual)
-        self.bed_target_moving_avg_obj.enqueue(bed_temp_target)
-        self.bed_actual_moving_avg_obj.enqueue(bed_temp_actual)
-
         # concatinate the extracted information to deliver it to the next processing stage
-        return {'bed_temp_act': self.bed_actual_moving_avg_obj.get_moving_avg(),  'bed_temp_target': self.bed_target_moving_avg_obj.get_moving_avg(), 'tool_temp_act': self.tool_actual_moving_avg_obj.get_moving_avg(),  'tool_temp_target': self.tool_target_moving_avg_obj.get_moving_avg(), 'global_state': is_printing}
+        return {'bed_temp_act': self.bed_actual_moving_avg_obj.get_moving_avg(),  'bed_temp_target': self.bed_target_val, 'tool_temp_act': self.tool_actual_moving_avg_obj.get_moving_avg(),  'tool_temp_target': self.tool_target_val, 'global_state': is_printing}
 
     def apply_lamp_state_rules(self, bed_temp, bed_temp_demanded, tool_temp, tool_temp_demanded, is_printing):
         is_target_temp_set = False
-        if (bed_temp_demanded != 0.0) and (tool_temp_demanded != 0.0):
+        if (bed_temp_demanded != 0.0) or (tool_temp_demanded != 0.0):
             is_target_temp_set = True
         
         # TODO: (Maybe) add this to the circular buffer objects and hand over their avg delta_t values to the apply_lamp_state_rules method
         delta_t_bed = bed_temp_demanded - bed_temp
         delta_t_tool = tool_temp_demanded - tool_temp
-        
+        logging.debug("delta_t_tool = " + str(delta_t_tool))
+
         log_str = "" # avoid log spam
         tmp_state = -1
-        is_delta_t_existing = (abs(delta_t_bed) > float(self.heating_threshold)) or (abs(delta_t_tool) > float(self.heating_threshold))
-        if is_printing:
+        delta_t_bed_exists = abs(delta_t_bed) > float(self.heating_threshold)
+        delta_t_tool_exists = abs(delta_t_tool) > float(self.heating_threshold)
+
+        is_delta_t_existing = delta_t_bed_exists or delta_t_tool_exists
+
+        if is_printing and (not is_delta_t_existing):
             tmp_state = PrinterState.PRINTING
             log_str = "printing"
-        elif is_delta_t_existing and (not is_printing) and is_target_temp_set:
+        elif is_delta_t_existing and is_target_temp_set:
             tmp_state = PrinterState.HEATING
             log_str = "heating"
         else:
             tmp_state = PrinterState.STANDBY
             log_str = "standby"
-        
-        logging.warning("tmp_state is " + str(tmp_state))
 
         if self.octoprint_printer_state != tmp_state:
             self.octoprint_printer_state = tmp_state
+            self.state_changed = True
             logging.info("Printer state has changed to " + log_str)
     
     def calcuate_lamp_state(self, destilled_state):
@@ -105,8 +108,6 @@ class OctoprintJsonPoller():
 
         self.apply_lamp_state_rules(destilled_state.get('bed_temp_act'), destilled_state.get('bed_temp_target'), destilled_state.get('tool_temp_act'), destilled_state.get('tool_temp_target'), destilled_state.get('global_state'))
         
-        return self.octoprint_printer_state
-
     def get_octoprint_state(self):
         return self.octoprint_printer_state
 
@@ -119,13 +120,15 @@ class OctoprintJsonPoller():
                 self.dbus_instance.set_state(8) # turn all lights off in case of invalid json from octoprint
             
             destilled_state = self.destil_printer_state(printer_json)
-            aimed_lamp_state = self.calcuate_lamp_state(destilled_state)
+            #aimed_lamp_state = self.calcuate_lamp_state(destilled_state)
+            self.calcuate_lamp_state(destilled_state)
 
             #D-Bus
             # driver_state = int(self.dbus_instance.get_lamp_state(aimed_lamp_state.value)) # maybe we will use this later
-            if self.last_destilled_state != destilled_state:
+            if self.state_changed:
                 logging.info("Update dbus to state " + str(destilled_state))
-                self.send_polling_state_to_driver(aimed_lamp_state.value)
+                self.state_changed = False
+                self.send_polling_state_to_driver(self.octoprint_printer_state)
                 self.last_destilled_state = destilled_state
             
             time.sleep(5)
@@ -135,16 +138,16 @@ class OctoprintJsonPoller():
 
     def send_polling_state_to_driver(self, aimed_state):
         self.dbus_instance.set_state(6) # lightplay 1
-        time.sleep(1)
         if aimed_state == PrinterState.STANDBY:
-            print("STANDBY")
+            logging.info("STANDBY")
             self.dbus_instance.set_state(8) # reset all lights call
             self.dbus_instance.set_state(0)
         elif aimed_state == PrinterState.HEATING:
-            print("HEATING")
+            logging.info("HEATING")
             self.dbus_instance.set_state(8)
             self.dbus_instance.set_state(1)
         elif aimed_state == PrinterState.PRINTING:
-            print("PRINTING")
+            logging.info("PRINTING")
             self.dbus_instance.set_state(8)
             self.dbus_instance.set_state(2)
+        

@@ -47,8 +47,9 @@ namespace printer_lamp {
         }
             
         // setting state via driver and set signal
-        std::size_t retry_counter = 0;
-        while (retry_counter < 5) {
+        // std::size_t retry_counter = 0;
+        //while (retry_counter < 5) {
+        while(true) {
             if (this->write_to_driver(demanded_state)) {
                 std::cout << "State change to " << demanded_state << " successful\n";
                 m_lamp_state = demanded_state;
@@ -56,14 +57,16 @@ namespace printer_lamp {
                 break;
             } else {
                 std::cout << "Could not write to driver properly. Retrying...\n";
-                retry_counter++;
-                std::this_thread::sleep_for(std::chrono::seconds(1));
+                //retry_counter++;
+                std::this_thread::sleep_for(std::chrono::seconds(5));
             }
         }
+        /*
         if (retry_counter == 5) {
             std::cerr << "Could not write to driver after 5 retrys - something bigger might have went wrong\n";
             exit(1);
         }
+        */
     }
     
     int DriverDbusBridge::send_state_change_signal() const {
