@@ -13,7 +13,7 @@ class PrinterState(Enum):
     PRINTING = 2
 
 class OctoprintJsonPoller():
-    def __init__(self, heating_threshold, dbus_bridge, octo_api_key, ip_addr, port=80):
+    def __init__(self, heating_threshold, heating_clip_bed, heating_clip_tool, dbus_bridge, octo_api_key, ip_addr, port=80):
         self.dbus_instance = dbus_bridge
         self.octo_api_key = octo_api_key
         self.ip_addr = ip_addr
@@ -27,9 +27,9 @@ class OctoprintJsonPoller():
         self.state_changed = None
 
         self.bed_target_val = None
-        self.bed_actual_moving_avg_obj = MovingAvgRingbuffer(3)
+        self.bed_actual_moving_avg_obj = MovingAvgRingbuffer(3, heating_clip_bed)
         self.tool_target_val = None
-        self.tool_actual_moving_avg_obj = MovingAvgRingbuffer(3)
+        self.tool_actual_moving_avg_obj = MovingAvgRingbuffer(3, heating_clip_tool)
 
         logging.info("Octoprint poller initialized successfully")
 
@@ -61,6 +61,9 @@ class OctoprintJsonPoller():
             logging.warning("Could not get the needed printer attributes for destiling the printer state") 
             return None
 
+        #logging.debug("Current tool elements:")
+        #self.tool_actual_moving_avg_obj.print_saved_values()
+        
         # concatinate the extracted information to deliver it to the next processing stage
         return {'bed_temp_act': self.bed_actual_moving_avg_obj.get_moving_avg(),  'bed_temp_target': self.bed_target_val, 'tool_temp_act': self.tool_actual_moving_avg_obj.get_moving_avg(),  'tool_temp_target': self.tool_target_val, 'global_state': is_printing}
 
@@ -131,7 +134,7 @@ class OctoprintJsonPoller():
                 self.send_polling_state_to_driver(self.octoprint_printer_state)
                 self.last_destilled_state = destilled_state
             
-            time.sleep(5)
+            time.sleep(2.5)
             
     def start_polling_loop(self):
         self.polling_loop()

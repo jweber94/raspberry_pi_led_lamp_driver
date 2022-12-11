@@ -60,6 +60,12 @@ class ConfigExtractor:
     def get_heating_threshold(self):
         return self.conf_parser['PRINTERSERVICE']['heating_threshold']
 
+    def get_heating_clip_bed(self):
+        return float(self.conf_parser['PRINTERSERVICE']['heating_clip_bed'])
+
+    def get_heating_clip_tool(self):
+        return float(self.conf_parser['PRINTERSERVICE']['heating_clip_tool'])
+
 
 ##############################
 ### Entrypoint interaction ###
@@ -69,7 +75,7 @@ def main():
     config_obj = ConfigExtractor()
     logging.info("Starting: Try to connect with DBus and the printer lamp interaction service...")
     dbus_bright = DBusLampBridge()
-    octoprint_interface_instance = OctoprintJsonPoller(config_obj.get_heating_threshold(), dbus_bright, config_obj.get_octopi_api_key(), config_obj.get_octopi_ip(), config_obj.get_octopi_port())
+    octoprint_interface_instance = OctoprintJsonPoller(config_obj.get_heating_threshold(), config_obj.get_heating_clip_bed(), config_obj.get_heating_clip_tool(), dbus_bright, config_obj.get_octopi_api_key(), config_obj.get_octopi_ip(), config_obj.get_octopi_port())
     logging.info("String up the app successful. Looking out for state changes...")
     octoprint_interface_instance.start_polling_loop()
 
